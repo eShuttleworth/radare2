@@ -182,15 +182,14 @@ static RList *symbols (RBinFile *bf) {
 
 	RListIter *is_exp = NULL;
 	RBinWasmCodeEntry *func;
-	RBinWasmExportEntry *export = NULL;
 	r_list_foreach (codes, iter, func) {
 		if (!(ptr = R_NEW0 (RBinSymbol))) {
 			goto bad_alloc;
 		}
 
-		char *fcn_name = r_bin_wasm_get_function_name (bin, fcn_idx);
+		const char *fcn_name = r_bin_wasm_get_function_name (bin, fcn_idx);
 		if (fcn_name) {
-			ptr->name = fcn_name;
+			ptr->name = strdup (fcn_name);
 
 			is_exp = r_list_find (exports, &fcn_idx, (RListComparator)find_export);
 			if (is_exp) {
