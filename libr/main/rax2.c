@@ -248,12 +248,11 @@ dotherax:
 	} else if (flags & (1 << 8)) { // -K
 		int n = ((strlen (str)) >> 1) + 1;
 		char *s = NULL;
-		ut32 *m;
 		buf = (ut8 *) malloc (n);
 		if (!buf) {
 			return false;
 		}
-		m = (ut32 *) buf;
+		ut32 *m = (ut32 *) buf;
 		memset (buf, '\0', n);
 		n = r_hex_str2bin (str, (ut8 *) buf);
 		if (n < 1 || !memcmp (str, "0x", 2)) {
@@ -356,10 +355,20 @@ dotherax:
 		printf ("%s\n", buf);
 		return true;
 	} else if (flags & (1 << 11)) { // -t
-		ut32 n = r_num_math (num, str);
+		RList *split = r_str_split_list (str, "GMT", 0);
+		char *ts = r_list_head (split)->data;
+		char *gmt = NULL;
+		if (r_list_length (split) >= 2 && strlen (r_list_head (split)->n->data) > 2) {
+			gmt = (char *) r_list_head (split)->n->data + 2;
+		}
+		ut32 n = r_num_math (num, ts);
 		RPrint *p = r_print_new ();
+		if (gmt) {
+			p->datezone = r_num_math (num, gmt);
+		}
 		r_print_date_unix (p, (const ut8 *) &n, sizeof (ut32));
 		r_print_free (p);
+		r_list_free (split);
 		return true;
 	} else if (flags & (1 << 12)) { // -E
 		const int len = strlen (str);
@@ -514,7 +523,7 @@ dotherax:
 		return true;
 	}
 
-	if (r_str_startswith (str, "0x")) {
+	if  (str[0] == '0' && (tolower (str[1]) == 'x')) {
 		out_mode = (flags & 32)? '0': 'I';
 	} else if (r_str_startswith (str, "b")) {
 		out_mode = 'B';

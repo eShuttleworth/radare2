@@ -171,8 +171,17 @@ static RList* sections(RBinFile *bf) {
 			ptr->name = strdup ((char*)section[i].name);
 			if (strstr (ptr->name, "data") && !strstr (ptr->name, "rel") && !strstr (ptr->name, "pydata")) {
 				ptr->is_data = true;
+			} else if (!strcmp (ptr->name, "C")) {
+				ptr->is_data = true;
 			}
 			if (strstr (ptr->name, ".got")) {
+#if R_BIN_ELF64
+				int wordsize = 8;
+#else
+				int wordsize = 4;
+#endif
+				ptr->format = r_str_newf ("Cd %d[%d]", wordsize, section[i].size / wordsize);
+			} else if (strstr (ptr->name, ".rela.")) {
 #if R_BIN_ELF64
 				int wordsize = 8;
 #else
@@ -528,8 +537,8 @@ static RList* imports(RBinFile *bf) {
 			break;
 		}
 		ptr->name = strdup (import[i].name);
-		ptr->bind = r_str_const (import[i].bind);
-		ptr->type = r_str_const (import[i].type);
+		ptr->bind = import[i].bind;
+		ptr->type = import[i].type;
 		ptr->ordinal = import[i].ordinal;
 		setimpord (elf, ptr->ordinal, ptr);
 		r_list_append (ret, ptr);
@@ -1085,7 +1094,7 @@ static RList* fields(RBinFile *bf) {
 	}
 
 	#define ROW(nam, siz, val, fmt) \
-		r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt));
+		r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt, false));
 	if (r_buf_size (bf->buf) < sizeof (Elf_ (Ehdr))) {
 		return ret;
 	}

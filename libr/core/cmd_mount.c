@@ -2,21 +2,21 @@
 
 static const char *help_msg_m[] = {
 	"Usage:", "m[-?*dgy] [...] ", "Mountpoints management",
+	"m", " /mnt ext2 0", "Mount ext2 fs at /mnt with delta 0 on IO",
+	"m", " /mnt", "Mount fs at /mnt with autodetect fs and current offset",
 	"m", "", "List all mountpoints in human readable format",
 	"m*", "", "Same as above, but in r2 commands",
-	"mj", "", "List mounted filesystems in JSON",
-	"mL", "", "List filesystem plugins (Same as Lm)",
-	"m", " /mnt", "Mount fs at /mnt with autodetect fs and current offset",
-	"m", " /mnt ext2 0", "Mount ext2 fs at /mnt with delta 0 on IO",
 	"m-/", "", "Umount given path (/)",
+	"mL", "", "List filesystem plugins (Same as Lm)",
 	"mc", " [file]", "Cat: Show the contents of the given file",
 	"md", " /", "List directory contents for path",
 	"mf", "[?] [o|n]", "Search files for given filename or for offset",
 	"mg", " /foo", "Get fs file/dir and dump it to disk",
-	"mo", " /foo/bar", "Open given file into a malloc://",
 	"mi", " /foo/bar", "Get offset and size of given file",
-	"mp", "", "List all supported partition types",
+	"mj", "", "List mounted filesystems in JSON",
+	"mo", " /foo/bar", "Open given file into a malloc://",
 	"mp", " msdos 0", "Show partitions in msdos format at offset 0",
+	"mp", "", "List all supported partition types",
 	"ms", " /mnt", "Open filesystem prompt at /mnt",
 	"mw", " [file] [data]", "Write data into file", // TODO: add mwf
 	"my", "", "Yank contents of file into clipboard",
@@ -142,10 +142,20 @@ static int cmd_mount(void *data, const char *_input) {
 			}
 			input = (char *)r_str_trim_ro (input);
 			ptr = (char*)r_str_trim_ro (ptr);
-			if (!r_fs_mount (core->fs, input, ptr, off)) {
-				if (!r_fs_mount (core->fs, ptr, input, off)) {
-					eprintf ("Cannot mount %s\n", input);
+
+			const char *mountp = input;
+			const char *fstype = ptr;
+			if (*mountp != '/') {
+				if (*fstype != '/') {
+					eprintf ("Invalid mountpoint\n");
+					return 0;
 				}
+				mountp = ptr;
+				fstype = input;
+			}
+
+			if (!r_fs_mount (core->fs, fstype, mountp, off)) {
+				eprintf ("Cannot mount %s\n", input);
 			}
 		} else {
 			if (!(ptr = r_fs_name (core->fs, core->offset))) {

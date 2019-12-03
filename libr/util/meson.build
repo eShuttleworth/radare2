@@ -4,6 +4,7 @@ r_util_sources = [
   'assert.c',
   'alloc.c',
   'donut.c',
+  'table.c',
   'getopt.c',
   'base85.c',
   'base91.c',
@@ -53,6 +54,7 @@ r_util_sources = [
   'spaces.c',
   'stack.c',
   'str.c',
+  'str_constpool.c',
   'str_trim.c',
   'strbuf.c',
   'strpool.c',
@@ -75,6 +77,7 @@ r_util_sources = [
   'vector.c',
   'w32-sys.c',
   'zip.c',
+  'protobuf.c',
   'regex/regcomp.c',
   'regex/regexec.c',
   'regex/regerror.c'
@@ -88,7 +91,7 @@ endif
 
 r_util = library('r_util', r_util_sources,
   include_directories: platform_inc,
-  c_args: library_cflags,
+  c_args: library_cflags + ['-DR_UTIL_SRC=1'],
   dependencies: r_util_deps,
   install: true,
   implicit_include_directories: false,

@@ -745,6 +745,17 @@ static ut32 arithmetic (ArmOp *op, int k) {
 	return data;
 }
 
+static ut32 neg(ArmOp *op) {
+	if (op->operands_count < 2) {
+		return -1;
+	}
+	op->operands_count++;
+	op->operands[2] = op->operands[1];
+	op->operands[1].reg = 31; // xzr
+
+	return arithmetic (op, 0xd1); // sub reg0, xzr, reg1
+}
+
 static bool parseOperands(char* str, ArmOp *op) {
 	char *t = strdup (str);
 	int operand = 0;
@@ -917,6 +928,15 @@ static bool parseOperands(char* str, ArmOp *op) {
 				op->operands[operand].mem_option = mem_opt;
 			}
 			break;
+		case '#':
+			if (token[1] == '-') {
+				op->operands[operand].sign = -1;
+			}
+			op->operands_count ++;
+			op->operands[operand].type = ARM_CONSTANT;
+			op->operands[operand].immediate = r_num_math (NULL, token + 1);
+			imm_count++;
+			break;
 		case '-':
 			op->operands[operand].sign = -1;
 			// falthru
@@ -951,6 +971,46 @@ static bool parseOpcode(const char *str, ArmOp *op) {
 	op->mnemonic = in;
 	space ++;
 	return parseOperands (space, op);
+}
+
+static bool handlePAC(ut32 *op, const char *str) {
+	if (!strcmp (str, "autiasp")) {
+		*op = 0xbf2303d5;
+		return true;
+	}
+	if (!strcmp (str, "autiaz")) {
+		*op = 0x9f2303d5;
+		return true;
+	}
+	if (!strcmp (str, "autibsp")) {
+		*op = 0xff2303d5;
+		return true;
+	}
+	if (!strcmp (str, "autibz")) {
+		*op = 0xdf2303d5;
+		return true;
+	}
+	if (!strcmp (str, "paciaz")) {
+		*op = 0x1f2303d5;
+		return true;
+	}
+	if (!strcmp (str, "pacibz")) {
+		*op = 0x5f2303d5;
+		return true;
+	}
+	if (!strcmp (str, "paciasp")) {
+		*op = 0x3f2303d5;
+		return true;
+	}
+	if (!strcmp (str, "pacibsp")) {
+		*op = 0x7f2303d5;
+		return true;
+	}
+	if (!strcmp (str, "retab")) {
+		*op = 0xff0f5fd6;
+		return true;
+	}
+	return false;
 }
 
 bool arm64ass(const char *str, ut64 addr, ut32 *op) {
@@ -1039,9 +1099,17 @@ bool arm64ass(const char *str, ut64 addr, ut32 *op) {
 		*op = adrp (&ops, addr, 0x00000090);
 		return *op != -1;
 	}
+	if (!strncmp (str, "neg", 3)) {
+		*op = neg (&ops);
+		return *op != -1;
+	}
 	if (!strcmp (str, "isb")) {
 		*op = 0xdf3f03d5;
 		return *op != -1;
+	}
+	// PAC
+	if (handlePAC (op, str)) {
+		return true;
 	}
 	if (!strcmp (str, "nop")) {
 		*op = 0x1f2003d5;

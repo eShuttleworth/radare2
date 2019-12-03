@@ -117,20 +117,26 @@ R_API RList *r_anal_reflines_get(RAnal *anal, ut64 addr, const ut8 *buf, ut64 le
 			}
 			nlines--;
 		}
-		{
-			const RAnalMetaItem *mi = r_meta_find_any_except (anal, addr, R_META_TYPE_COMMENT, 0);
-			if (mi) {
-				ptr += mi->size;
-				addr += mi->size;
-				free (mi->str);
-				continue;
-			}
-		}
 		if (anal->maxreflines && count > anal->maxreflines) {
 			break;
 		}
-
 		addr += sz;
+		{
+			RAnalMetaItem *mi = r_meta_find_any_except (anal, addr, R_META_TYPE_COMMENT, 0);
+			if (mi) {
+				ptr += mi->size;
+				addr += mi->size;
+				r_meta_item_free (mi);
+				continue;
+			}
+		}
+		if (!anal->iob.is_valid_offset (anal->iob.io, addr, 1)) {
+			const int size = 4;
+			ptr += size;
+			addr += size;
+			continue;
+		}
+
 		// This can segfault if opcode length and buffer check fails
 		r_anal_op_fini (&op);
 		sz = r_anal_op (anal, &op, addr, ptr, (int)(end - ptr), R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_HINT);
@@ -532,7 +538,13 @@ R_API RAnalRefStr *r_anal_reflines_str(void *_core, ut64 addr, int opts) {
 
 	r_list_free (lvls);
 	RAnalRefStr *out = R_NEW0 (RAnalRefStr);
-	out->cols = col_str;
 	out->str = str;
+	out->cols = col_str;
 	return out;
+}
+
+R_API void r_anal_reflines_str_free(RAnalRefStr *refstr) {
+	free (refstr->str);
+	free (refstr->cols);
+	free (refstr);
 }

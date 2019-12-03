@@ -37,7 +37,7 @@ static ut32 consume_r (RBuffer *b, ut64 max, size_t *n_out, ConsumeFcn consume_f
 }
 
 static size_t consume_u32_r (RBuffer *b, ut64 max, ut32 *out) {
-	size_t n;
+	size_t n = 0;
 	ut32 tmp = consume_r (b, max, &n, read_u32_leb128);
 	if (out) {
 		*out = tmp;
@@ -93,10 +93,12 @@ static size_t consume_init_expr_r (RBuffer *b, ut64 max, ut8 eoc, void *out) {
 		return 0;
 	}
 	size_t res = 0;
-	while (r_buf_tell (b) <= max && r_buf_read8 (b) != eoc) {
+	ut8 cur = r_buf_read8 (b);
+	while (r_buf_tell (b) <= max && cur != eoc) {
+		cur = r_buf_read8 (b);
 		res++;
 	}
-	if (r_buf_read8 (b) != eoc) {
+	if (cur != eoc) {
 		return 0;
 	}
 	return res + 1;
@@ -108,9 +110,6 @@ static size_t consume_locals_r (RBuffer *b, ut64 max, RBinWasmCodeEntry *out) {
 		return 0;
 	}
 	ut32 count = out ? out->local_count : 0;
-	if (!(cur + (count * 7) <= max)) { // worst case 7 bytes
-		return 0;
-	}
 	if (count > 0) {
 		if (!(out->locals = R_NEWS0 (struct r_bin_wasm_local_entry_t, count))) {
 			return 0;
@@ -172,19 +171,19 @@ static RList *r_bin_wasm_get_sections_by_id (RList *sections, ut8 id) {
 const char *r_bin_wasm_valuetype_to_string (r_bin_wasm_value_type_t type) {
 	switch (type) {
 	case R_BIN_WASM_VALUETYPE_i32:
-		return r_str_const ("i32");
+		return "i32";
 	case R_BIN_WASM_VALUETYPE_i64:
-		return r_str_const ("i62");
+		return "i62";
 	case R_BIN_WASM_VALUETYPE_f32:
-		return r_str_const ("f32");
+		return "f32";
 	case R_BIN_WASM_VALUETYPE_f64:
-		return r_str_const ("f64");
+		return "f64";
 	case R_BIN_WASM_VALUETYPE_ANYFUNC:
-		return r_str_const ("ANYFUNC");
+		return "ANYFUNC";
 	case R_BIN_WASM_VALUETYPE_FUNC:
-		return r_str_const ("FUNC");
+		return "FUNC";
 	default:
-		return r_str_const ("<?>");
+		return "<?>";
 	}
 }
 
@@ -452,19 +451,23 @@ static bool parse_namemap (RBuffer *b, ut64 max, RIDStorage *map, ut32 *count) {
 
 		ut32 idx;
 		if (!(consume_u32_r (b, max, &idx))) {
+            		R_FREE (name);
 			return false;
 		}
 
 		if (!(consume_u32_r (b, max, &name->len))) {
+			R_FREE (name);
 			return false;
 		}
 
 		if (!(consume_str_r (b, max, name->len, (char *)name->name))) {
+			R_FREE (name);
 			return false;
 		}
 		name->name[name->len] = 0;
 
 		if (!r_id_storage_add (map, name, &idx)) {
+			R_FREE (name);
 			return false;
 		};
 	}
@@ -525,6 +528,7 @@ static void *parse_custom_name_entry (RBuffer *b, ut64 max) {
 			goto beach;
 		}
 		if (!(consume_u32_r (b, max, &ptr->local->count))) {
+			free (ptr->local);
 			goto beach;
 		}
 
@@ -533,24 +537,36 @@ static void *parse_custom_name_entry (RBuffer *b, ut64 max) {
 		for (i = 0; i < ptr->local->count; i++) {
 			RBinWasmCustomNameLocalName *local_name = R_NEW0 (RBinWasmCustomNameLocalName);
 			if (!local_name) {
+				free (ptr->local);
+				free (ptr);
 				return NULL;
 			}
 
 			if (!(consume_u32_r (b, max, &local_name->index))) {
 				r_list_free (ptr->local->locals);
+				free (ptr->local);
+				free (local_name);
 				goto beach;
 			}
 
 			local_name->names = r_id_storage_new (0, UT32_MAX);
 			if (!local_name->names) {
+				r_list_free (ptr->local->locals);
+				free (ptr->local);
+				free (local_name);
 				goto beach;
 			}
 
 			if (!parse_namemap (b, max, local_name->names, &local_name->names_count)) {
+				r_id_storage_free (local_name->names);
+				r_list_free (ptr->local->locals);
+				free (ptr->local);
+				free (local_name);
 				goto beach;
 			}
 
 			if (!r_list_append (ptr->local->locals, local_name)) {
+				free (local_name);
 				goto beach;
 			};
 		}

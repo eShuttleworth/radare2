@@ -10,6 +10,7 @@ static const char *help_msg_f[] = {
 	"f?","flagname","check if flag exists or not, See ?? and ?!",
 	"f."," [*[*]]","list local per-function flags (*) as r2 commands",
 	"f.","blah=$$+12","set local function label named 'blah'",
+	"f."," fname","list all local labels for the given function",
 	"f*","","list flags in r commands",
 	"f"," name 12 @ 33","set flag 'name' with length 12 at offset 33",
 	"f"," name = 33","alias for 'f name @ 33' or 'f name 1 33'",
@@ -19,7 +20,6 @@ static const char *help_msg_f[] = {
 	"f+","name 12 @ 33","like above but creates new one if doesnt exist",
 	"f-","name","remove flag 'name'",
 	"f-","@addr","remove flag at address expression",
-	"f."," fname","list all local labels for the given function",
 	"f="," [glob]","list range bars graphics with flag offsets and sizes",
 	"fa"," [name] [alias]","alias a flag to evaluate an expression",
 	"fb"," [addr]","set base address for new flags",
@@ -393,7 +393,7 @@ static void flagbars(RCore *core, const char *glob) {
 	}
 
 	struct flagbar_t u = { .core = core, .cols = cols };
-	r_flag_foreach_glob (core->flags, glob, flagbar_foreach, &u);
+	r_flag_foreach_space_glob (core->flags, glob, r_flag_space_cur (core->flags), flagbar_foreach, &u);
 }
 
 struct flag_to_flag_t {
@@ -420,7 +420,7 @@ static int flag_to_flag(RCore *core, const char *glob) {
 	return 0;
 }
 
-static void cmd_flag_tags (RCore *core, const char *input) {
+static void cmd_flag_tags(RCore *core, const char *input) {
 	char mode = input[1];
 	for (; *input && !IS_WHITESPACE (*input); input++) {}
 	char *inp = strdup (input);
@@ -815,6 +815,18 @@ rep:
 		char* comment = NULL;
 		bool comment_needs_free = false;
 		ut32 bsze = 1; //core->blocksize;
+		int eqdir = 0;
+
+		if (eq && eq > cstr) {
+			char *prech = eq - 1;
+			if (*prech == '+') {
+				eqdir = 1;
+				*prech = 0;
+			} else if (*prech == '-') {
+				eqdir = -1;
+				*prech = 0;
+			}
+		}
 
 		// Get outta here as fast as we can so we can make sure that the comment
 		// buffer used on later code can be freed properly if necessary.
@@ -824,9 +836,14 @@ rep:
 		}
 		// Check base64 padding
 		if (eq && !(b64 && eq > b64 && (eq[1] == '\0' || (eq[1] == '=' && eq[2] == '\0')))) {
-			// TODO: add support for '=' char in non-base64 flag comments
 			*eq = 0;
-			off = r_num_math (core->num, eq + 1);
+			ut64 arg = r_num_math (core->num, eq + 1);
+			RFlagItem *item = r_flag_get (core->flags, cstr);
+			if (eqdir && item) {
+				off = item->offset + (arg * eqdir);
+			} else {
+				off = arg;
+			}
 		}
 		if (s) {
 			*s = '\0';
@@ -847,8 +864,7 @@ rep:
 					}
 				}
 			}
-
-			bsze = s[1] == '=' ? 1 : r_num_math (core->num, s + 1);
+			bsze = (s[1] == '=') ? 1 : r_num_math (core->num, s + 1);
 		}
 
 		bool addFlag = true;
@@ -902,8 +918,11 @@ rep:
 					r_anal_fcn_labels (core->anal, NULL, 1);
 				} else {
 					RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, off, 0);
-					if (fcn) r_anal_fcn_labels (core->anal, fcn, 1);
-					else eprintf ("Cannot find function at 0x%08"PFMT64x"\n", off);
+					if (fcn) {
+						r_anal_fcn_labels (core->anal, fcn, 1);
+					} else {
+						eprintf ("Cannot find function at 0x%08"PFMT64x"\n", off);
+					}
 				}
 			} else {
 				char *name = strdup (input + ((input[2] == ' ')? 2: 1));
@@ -911,8 +930,8 @@ rep:
 				if (name) {
 					char *eq = strchr (name, '=');
 					if (eq) {
-						*eq ++ = 0;
-						off = r_num_math (core->num, eq);
+						*eq = 0;
+						off = r_num_math (core->num, eq + 1);
 					}
 					r_str_trim (name);
 					if (fcn) {
@@ -939,8 +958,7 @@ rep:
 	case 'l': // "fl"
 		if (input[1] == '?') { // "fl?"
 			eprintf ("Usage: fl[a] [flagname] [flagsize]\n");
-		} else
-		if (input[1] == 'a') { // "fla"
+		} else if (input[1] == 'a') { // "fla"
 			// TODO: we can optimize this if core->flags->flags is sorted by flagitem->offset
 			char *glob = strchr (input, ' ');
 			if (glob) {
@@ -1023,7 +1041,10 @@ rep:
 			break;
 		case 'r':
 			if (input[2] ==' ') {
-				r_flag_space_rename (core->flags, NULL, input + 2);
+				char *newname = strdup (input + 3);
+				r_str_trim (newname);
+				r_flag_space_rename (core->flags, NULL, newname);
+				free (newname);
 			} else {
 				eprintf ("Usage: fsr [newname]\n");
 			}
@@ -1052,8 +1073,13 @@ rep:
 			}
 			break;
 		case ' ':
-			r_flag_space_set (core->flags, input+2);
+		{
+			char *name = strdup (input + 2);
+			r_str_trim (name);
+			r_flag_space_set (core->flags, name);
+			free (name);
 			break;
+		}
 		case 'm':
 			{ RFlagItem *f;
 			ut64 off = core->offset;
@@ -1108,7 +1134,7 @@ rep:
 			}
 			fi = r_flag_get (core->flags, arg);
 			if (fi) {
-				ret = r_flag_color (core->flags, fi, color);
+				ret = r_flag_item_set_color (fi, color);
 				if (!color && ret)
 					r_cons_println (ret);
 			} else {
@@ -1216,30 +1242,51 @@ rep:
 	case '*': // "f*"
 	case 'j': // "fj"
 	case 'q': // "fq"
-		if (input[0] && input[1] == '.' && !input[2]) {
-			RFlagItem *item = r_flag_get_at (core->flags, core->offset, false);
-			if (item) {
-				switch (input[0]) {
+		if (input[0]) {
+			switch (input[1]) {
+			case 'j':
+			case 'q':
+			case 'n':
+			case '*':
+				input++;
+				break;
+			}
+		}
+		if (input[0] && input[1] == '.') {
+			const int mode = input[2];
+			const RList *list = r_flag_get_list (core->flags, core->offset);
+			PJ *pj = NULL;
+			if (mode == 'j') {
+				pj = pj_new ();
+				pj_a (pj);
+			}
+			RListIter *iter;
+			RFlagItem *item;
+			r_list_foreach (list, iter, item) {
+				switch (mode) {
 				case '*':
 					r_cons_printf ("f %s = 0x%08"PFMT64x"\n", item->name, item->offset);
 					break;
 				case 'j':
 					{
-						PJ *pj = pj_new ();
 						pj_o (pj);
 						pj_ks (pj, "name", item->name);
+						pj_ks (pj, "realname", item->realname);
 						pj_kn (pj, "offset", item->offset);
 						pj_kn (pj, "size", item->size);
 						pj_end (pj);
-						char *s = pj_drain (pj);
-						r_cons_printf ("%s\n", s);
-						free (s);
 					}
 					break;
 				default:
 					r_cons_printf ("%s\n", item->name);
 					break;
 				}
+			}
+			if (mode == 'j') {
+				pj_end (pj);
+				char *s = pj_drain (pj);
+				r_cons_printf ("%s\n", s);
+				free (s);
 			}
 		} else {
 			r_flag_list (core->flags, *input, input[0]? input + 1: "");

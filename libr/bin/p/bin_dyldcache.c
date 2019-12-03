@@ -653,7 +653,7 @@ static RList *create_cache_bins(RBinFile *bf, RBuffer *cache_buf, cache_hdr_t *h
 	char *target_libs = NULL;
 	target_libs = r_sys_getenv ("R_DYLDCACHE_FILTER");
 	if (target_libs) {
-		RList *target_lib_names = r_str_split_list (target_libs, ":");
+		RList *target_lib_names = r_str_split_list (target_libs, ":", 0);
 		if (!target_lib_names) {
 			R_FREE (target_libs);
 			r_list_free (bins);
@@ -1245,7 +1245,7 @@ void symbols_from_bin(RList *ret, RBinFile *bf, RDyldBinImage *bin) {
 		sym->name = strdup (symbols[i].name);
 		sym->vaddr = symbols[i].addr;
 		if (sym->name[0] == '_') {
-			char *dn = r_bin_demangle (bf, sym->name, sym->name, sym->vaddr);
+			char *dn = r_bin_demangle (bf, sym->name, sym->name, sym->vaddr, false);
 			if (dn) {
 				sym->dname = dn;
 				char *p = strchr (dn, '.');
@@ -1263,10 +1263,9 @@ void symbols_from_bin(RList *ret, RBinFile *bf, RDyldBinImage *bin) {
 				}
 			}
 		}
-		sym->forwarder = r_str_const ("NONE");
-		sym->bind = r_str_const ((symbols[i].type == R_BIN_MACH0_SYMBOL_TYPE_LOCAL)?
-			R_BIN_BIND_LOCAL_STR: R_BIN_BIND_GLOBAL_STR);
-		sym->type = r_str_const (R_BIN_TYPE_FUNC_STR);
+		sym->forwarder = "NONE";
+		sym->bind = (symbols[i].type == R_BIN_MACH0_SYMBOL_TYPE_LOCAL)? R_BIN_BIND_LOCAL_STR: R_BIN_BIND_GLOBAL_STR;
+		sym->type = R_BIN_TYPE_FUNC_STR;
 		sym->paddr = symbols[i].offset + bf->o->boffset;
 		sym->size = symbols[i].size;
 		sym->ordinal = i;
@@ -1488,7 +1487,7 @@ static RList *classes(RBinFile *bf) {
 				bf->o->bin_obj = mach0;
 				bf->buf = cache->buf;
 				if (is_classlist) {
-					MACH0_(get_class_t) ((ut64) pointer_to_class, bf, klass, false);
+					MACH0_(get_class_t) ((ut64) pointer_to_class, bf, klass, false, NULL);
 				} else {
 					MACH0_(get_category_t) ((ut64) pointer_to_class, bf, klass, NULL);
 				}

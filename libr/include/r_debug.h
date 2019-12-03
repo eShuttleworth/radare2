@@ -368,7 +368,7 @@ typedef struct r_debug_plugin_t {
 	int (*startv)(int argc, char **argv);
 	int (*attach)(RDebug *dbg, int pid);
 	int (*detach)(RDebug *dbg, int pid);
-	int (*select)(int pid, int tid);
+	int (*select)(RDebug *dbg, int pid, int tid);
 	RList *(*threads)(RDebug *dbg, int pid);
 	RList *(*pids)(RDebug *dbg, int pid);
 	RList *(*tids)(RDebug *dbg, int pid);
@@ -392,11 +392,11 @@ typedef struct r_debug_plugin_t {
 	/* memory */
 	RList *(*map_get)(RDebug *dbg);
 	RList *(*modules_get)(RDebug *dbg);
-	RDebugMap* (*map_alloc)(RDebug *dbg, ut64 addr, int size);
+	RDebugMap* (*map_alloc)(RDebug *dbg, ut64 addr, int size, bool thp);
 	int (*map_dealloc)(RDebug *dbg, ut64 addr, int size);
 	int (*map_protect)(RDebug *dbg, ut64 addr, int size, int perms);
 	int (*init)(RDebug *dbg);
-	int (*drx)(RDebug *dbg, int n, ut64 addr, int size, int rwx, int g);
+	int (*drx)(RDebug *dbg, int n, ut64 addr, int size, int rwx, int g, int api_type);
 	RDebugDescPlugin desc;
 	// TODO: use RList here
 } RDebugPlugin;
@@ -404,6 +404,7 @@ typedef struct r_debug_plugin_t {
 // TODO: rename to r_debug_process_t ? maybe a thread too ?
 typedef struct r_debug_pid_t {
 	int pid;
+	int ppid;
 	char status; /* stopped, running, zombie, sleeping ,... */
 	int runnable; /* when using 'run', 'continue', .. this proc will be runnable */
 	bool signalled;
@@ -491,7 +492,7 @@ R_API bool r_debug_plugin_add(RDebug *dbg, RDebugPlugin *foo);
 
 /* memory */
 R_API RList *r_debug_modules_list(RDebug*);
-R_API RDebugMap *r_debug_map_alloc(RDebug *dbg, ut64 addr, int size);
+R_API RDebugMap *r_debug_map_alloc(RDebug *dbg, ut64 addr, int size, bool thp);
 R_API int r_debug_map_dealloc(RDebug *dbg, RDebugMap *map);
 R_API RList *r_debug_map_list_new(void);
 R_API RDebugMap *r_debug_map_get(RDebug *dbg, ut64 addr);
@@ -536,7 +537,7 @@ R_API bool r_debug_arg_set(RDebug *dbg, int fast, int num, ut64 value);
 R_API RBreakpointItem *r_debug_bp_add(RDebug *dbg, ut64 addr, int hw, bool watch, int rw, char *module, st64 m_delta);
 
 /* pid */
-R_API int r_debug_thread_list(RDebug *dbg, int pid);
+R_API int r_debug_thread_list(RDebug *dbg, int pid, char fmt);
 
 R_API void r_debug_tracenodes_reset(RDebug *dbg);
 

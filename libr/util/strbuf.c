@@ -30,6 +30,43 @@ R_API void r_strbuf_init(RStrBuf *sb) {
 	memset (sb, 0, sizeof (RStrBuf));
 }
 
+R_API bool r_strbuf_copy(RStrBuf *dst, RStrBuf *src) {
+	r_return_val_if_fail (dst && src, false);
+	if (src->ptr) {
+		char *p = malloc (src->ptrlen);
+		if (!p) {
+			return false;
+		}
+		memcpy (p, src->ptr, src->ptrlen);
+		free (dst->ptr);
+		dst->ptr = p;
+		dst->ptrlen = src->ptrlen;
+	} else {
+		R_FREE (dst->ptr);
+		memcpy (dst->buf, src->buf, sizeof (dst->buf));
+	}
+	dst->len = src->len;
+	return true;
+}
+
+R_API bool r_strbuf_reserve(RStrBuf *sb, int len) {
+	r_return_val_if_fail (sb && len > 0, false);
+
+	if ((sb->ptr && len < sb->ptrlen) || (!sb->ptr && len < sizeof (sb->buf))) {
+		return true;
+	}
+	char *newptr = realloc (sb->ptr, len + 1);
+	if (!newptr) {
+		return false;
+	}
+	if (!sb->ptr) {
+		memcpy (newptr, sb->buf, sizeof (sb->buf));
+	}
+	sb->ptr = newptr;
+	sb->ptrlen = len + 1;
+	return true;
+}
+
 R_API bool r_strbuf_setbin(RStrBuf *sb, const ut8 *s, int l) {
 	r_return_val_if_fail (sb && s, false);
 	r_return_val_if_fail (l >= 0, false);
@@ -105,6 +142,27 @@ R_API bool r_strbuf_vsetf(RStrBuf *sb, const char *fmt, va_list ap) {
 	}
 done:
 	va_end (ap2);
+	return ret;
+}
+
+R_API bool r_strbuf_prepend(RStrBuf *sb, const char *s) {
+	r_return_val_if_fail (sb && s, false);
+	int l = strlen (s);
+	// fast path if no chars to append
+	if (l == 0) {
+		return true;
+	}
+	int newlen = l + sb->len;
+	char *ns = malloc (newlen + 1);
+	bool ret = false;
+	if (ns) {
+		memcpy (ns, s, l);
+		char *s = sb->ptr ? sb->ptr: sb->buf;
+		memcpy (ns + l, s, sb->len);
+		ns[newlen] = 0;
+		ret = r_strbuf_set (sb, ns);
+		free (ns);
+	}
 	return ret;
 }
 

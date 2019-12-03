@@ -14,7 +14,7 @@ R_API void r_bin_mem_free(void *data) {
 	free (mem);
 }
 
-static int reloc_cmp(const void *a, const RBNode *b) {
+static int reloc_cmp(const void *a, const RBNode *b, void *user) {
 	const RBinReloc *ar = (const RBinReloc *)a;
 	const RBinReloc *br = container_of (b, const RBinReloc, vrb);
 	if (ar->vaddr > br->vaddr) {
@@ -108,7 +108,7 @@ static RList *classes_from_symbols(RBinFile *bf) {
 			char *fn = swiftField (dn, cn);
 			if (fn) {
 				// eprintf ("FIELD %s  %s\n", cn, fn);
-				RBinField *f = r_bin_field_new (sym->paddr, sym->vaddr, sym->size, fn, NULL, NULL);
+				RBinField *f = r_bin_field_new (sym->paddr, sym->vaddr, sym->size, fn, NULL, NULL, false);
 				r_list_append (c->fields, f);
 				free (fn);
 			} else {
@@ -241,7 +241,7 @@ static RBNode *list2rbtree(RList *relocs) {
 	RBNode *res = NULL;
 
 	r_list_foreach (relocs, it, reloc) {
-		r_rbtree_insert (&res, reloc, &reloc->vrb, reloc_cmp);
+		r_rbtree_insert (&res, reloc, &reloc->vrb, reloc_cmp, NULL);
 	}
 	return res;
 }
