@@ -51,7 +51,7 @@ R_API int r_cons_controlz(int ch) {
 static int __parseMouseEvent() {
 	char xpos[32];
 	char ypos[32];
-	int ch = r_cons_readchar ();
+	(void)r_cons_readchar (); // skip first char
 	int ch2 = r_cons_readchar ();
 
 	// [32M - mousedown
@@ -76,7 +76,7 @@ static int __parseMouseEvent() {
 		}
 		ypos[i] = 0;
 		r_cons_set_click (atoi (xpos), atoi (ypos));
-		ch = r_cons_readchar ();
+		(void) r_cons_readchar ();
 		// ignored
 		int ch = r_cons_readchar ();
 		if (ch == 27) {
@@ -91,9 +91,36 @@ static int __parseMouseEvent() {
 	return 0;
 }
 
+#if __WINDOWS__
+static bool bCtrl;
+static bool is_arrow;
+#endif
+
 R_API int r_cons_arrow_to_hjkl(int ch) {
 #if __WINDOWS__
-	return ch < 2 ? 0 : ch;
+	if (is_arrow) {
+		switch (ch) {
+		case VK_DOWN: // key down
+			ch = bCtrl ? 'J' : 'j';
+			break;
+		case VK_RIGHT: // key right
+			ch = bCtrl ? 'L' : 'l';
+			break;
+		case VK_UP: // key up
+			ch = bCtrl ? 'K' : 'k';
+			break;
+		case VK_LEFT: // key left
+			ch = bCtrl ? 'H' : 'h';
+			break;
+		case VK_PRIOR: // key home
+			ch = 'K';
+			break;
+		case VK_NEXT: // key end
+			ch = 'J';
+			break;
+		}
+	}
+	return I->mouse_event && (ut8)ch == UT8_MAX ? 0 : ch;
 #endif
 	I->mouse_event = 0;
 	/* emacs */
@@ -143,13 +170,20 @@ R_API int r_cons_arrow_to_hjkl(int ch) {
 				int x = 0;
 				int y = 0;
 				int sc = 0;
+
+				char vel[8] = {0};
+				int vn = 0;
 				do {
 					ch = r_cons_readchar ();
-					eprintf ( "%c", ch);
+					// just for debugging
+					//eprintf ( "%c", ch);
 					if (sc > 0) {
-						if (ch >= '0'&& ch <= '9') {
+						if (ch >= '0' && ch <= '9') {
 							pos[p++] = ch;
 						}
+					}
+					if (sc < 1) {
+						vel[vn++] = ch;
 					}
 					if (ch == ';') {
 						if (sc == 1) {
@@ -160,15 +194,29 @@ R_API int r_cons_arrow_to_hjkl(int ch) {
 						p = 0;
 					}	
 				} while (ch != 'M' && ch != 'm');
+				int nvel = atoi (vel);
+				switch (nvel) {
+				case 2: // right click
+					if (ch == 'M') {
+						return INT8_MAX;
+					}
+					return -INT8_MAX;
+				case 64: // wheel up
+					return 'k';
+				case 65: // wheel down
+					return 'j';
+				}
 				pos[p++] = 0;
 				y = atoi (pos);
 				// M is mouse down , m is mouse up
-				if (ch == 'M') {
+				if (ch == 'M' || ch == 'm') {
 					r_cons_set_click (x, y);
+					if (ch == 'm') {
+						return INT8_MAX - 1;
+					}
 				}
 			}
 			return 0;
-			break;
 		case '[':
 			ch = r_cons_readchar ();
 			switch (ch) {
@@ -223,6 +271,37 @@ R_API int r_cons_arrow_to_hjkl(int ch) {
 		case '1':
 			ch = r_cons_readchar ();
 			switch (ch) {
+			case '1': ch = R_CONS_KEY_F1; break;
+			case '2': ch = R_CONS_KEY_F2; break;
+			case '3': ch = R_CONS_KEY_F3; break;
+			case '4': ch = R_CONS_KEY_F4; break;
+			case '5': ch = R_CONS_KEY_F5; break;
+			// case '6': ch = R_CONS_KEY_F5; break;
+			case '7': ch = R_CONS_KEY_F6; break;
+			case '8': ch = R_CONS_KEY_F7; break;
+			case '9': ch = R_CONS_KEY_F8; break;
+#if 0
+			case '5':
+				r_cons_readchar ();
+				ch = 0xf5;
+				break;
+			case '6':
+				r_cons_readchar ();
+				ch = 0xf7;
+				break;
+			case '7':
+				r_cons_readchar ();
+				ch = 0xf6;
+				break;
+			case '8':
+				r_cons_readchar ();
+				ch = 0xf7;
+				break;
+			case '9':
+				r_cons_readchar ();
+				ch = 0xf8;
+				break;
+#endif
 			// Support st/st-256color term and others
 			// for shift+arrows
 			case ';': // arrow+mod
@@ -249,32 +328,6 @@ R_API int r_cons_arrow_to_hjkl(int ch) {
 				case 'C': ch = 'L'; break;
 				case 'D': ch = 'H'; break;
 				}
-				break;
-/*
-			case '1': ch = R_CONS_KEY_F1; break;
-			case '2': ch = R_CONS_KEY_F2; break;
-			case '3': ch = R_CONS_KEY_F3; break;
-			case '4': ch = R_CONS_KEY_F4; break;
-*/
-			case '5':
-				r_cons_readchar ();
-				ch = 0xf5;
-				break;
-			case '6':
-				r_cons_readchar ();
-				ch = 0xf7;
-				break;
-			case '7':
-				r_cons_readchar ();
-				ch = 0xf6;
-				break;
-			case '8':
-				r_cons_readchar ();
-				ch = 0xf7;
-				break;
-			case '9':
-				r_cons_readchar ();
-				ch = 0xf8;
 				break;
 			} // F9-F12 not yet supported!!
 			break;
@@ -363,16 +416,19 @@ R_API int r_cons_any_key(const char *msg) {
 extern void resizeWin(void);
 
 #if __WINDOWS__
-static int __cons_readchar_w32 (ut32 usec) {
+static int __cons_readchar_w32(ut32 usec) {
 	int ch = 0;
 	BOOL ret;
-	BOOL bCtrl = FALSE;
+	bCtrl = false;
+	is_arrow = false;
 	DWORD mode, out;
 	HANDLE h;
 	INPUT_RECORD irInBuf;
 	int i, o;
 	bool resize = false;
+	bool click_n_drag = false;
 	void *bed;
+	I->mouse_event = 0;
 	h = GetStdHandle (STD_INPUT_HANDLE);
 	GetConsoleMode (h, &mode);
 	SetConsoleMode (h, ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS);
@@ -390,7 +446,10 @@ static int __cons_readchar_w32 (ut32 usec) {
 		if (ret) {
 			if (irInBuf.EventType == MOUSE_EVENT) {
 				if (irInBuf.Event.MouseEvent.dwEventFlags == MOUSE_MOVED) {
-					continue;
+					if (irInBuf.Event.MouseEvent.dwButtonState == FROM_LEFT_1ST_BUTTON_PRESSED) {
+						click_n_drag = true;
+					}
+					continue;			
 				}
 				if (irInBuf.Event.MouseEvent.dwEventFlags == MOUSE_WHEELED) {
 					if (irInBuf.Event.MouseEvent.dwButtonState & 0xFF000000) {
@@ -403,37 +462,33 @@ static int __cons_readchar_w32 (ut32 usec) {
 				switch (irInBuf.Event.MouseEvent.dwButtonState) {
 				case FROM_LEFT_1ST_BUTTON_PRESSED:
 					r_cons_set_click (irInBuf.Event.MouseEvent.dwMousePosition.X + 1, irInBuf.Event.MouseEvent.dwMousePosition.Y + 1);
-					ch = 1;
+					ch = UT8_MAX;
 					break;
 				case RIGHTMOST_BUTTON_PRESSED:
 					r_cons_enable_mouse (false);
 					break;
 				} // TODO: Handle more buttons?
 			}
+
+			if (click_n_drag) {
+				r_cons_set_click (irInBuf.Event.MouseEvent.dwMousePosition.X + 1, irInBuf.Event.MouseEvent.dwMousePosition.Y + 1);
+				ch = UT8_MAX;
+			}
+
 			if (irInBuf.EventType == KEY_EVENT) {
 				if (irInBuf.Event.KeyEvent.bKeyDown) {
 					ch = irInBuf.Event.KeyEvent.uChar.AsciiChar;
 					bCtrl = irInBuf.Event.KeyEvent.dwControlKeyState & 8;
 					if (irInBuf.Event.KeyEvent.uChar.AsciiChar == 0) {
-						ch = 0;
 						switch (irInBuf.Event.KeyEvent.wVirtualKeyCode) {
 						case VK_DOWN: // key down
-							ch = bCtrl ? 'J' : 'j';
-							break;
 						case VK_RIGHT: // key right
-							ch = bCtrl ? 'L' : 'l';
-							break;
 						case VK_UP: // key up
-							ch = bCtrl ? 'K' : 'k';
-							break;
 						case VK_LEFT: // key left
-							ch = bCtrl ? 'H' : 'h';
-							break;
 						case VK_PRIOR: // key home
-							ch = 'K';
-							break;
 						case VK_NEXT: // key end
-							ch = 'J';
+							ch = irInBuf.Event.KeyEvent.wVirtualKeyCode;
+							is_arrow = true;
 							break;
 						case VK_F1:
 							ch = R_CONS_KEY_F1;
@@ -472,7 +527,6 @@ static int __cons_readchar_w32 (ut32 usec) {
 							ch = R_CONS_KEY_F12;
 							break;
 						default:
-							ch = 0;
 							break;
 						}
 					}
@@ -629,7 +683,7 @@ R_API char *r_cons_password(const char *msg) {
 	// // cannot read when enabled in this way
 	// a->term_raw.c_lflag |= ICANON;
 	tcsetattr (0, TCSADRAIN, &a->term_raw);
-	signal (SIGTSTP, SIG_IGN);
+	r_sys_signal (SIGTSTP, SIG_IGN);
 #endif
 	while (i < sizeof (buf) - 1) {
 		int ch = r_cons_readchar ();
@@ -649,7 +703,7 @@ R_API char *r_cons_password(const char *msg) {
 	r_cons_set_raw (0);
 	printf ("\n");
 #if __UNIX__
-	signal (SIGTSTP, SIG_DFL);
+	r_sys_signal (SIGTSTP, SIG_DFL);
 #endif
 	return strdup (buf);
 }

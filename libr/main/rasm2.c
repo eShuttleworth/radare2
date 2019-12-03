@@ -35,7 +35,7 @@ static RAsmState *__as_new() {
 	if (!as) {
 		return NULL;
 	}
-	as->l = r_lib_new ("radare_plugin");
+	as->l = r_lib_new (NULL, NULL);
 	as->a = r_asm_new ();
 	as->anal = r_anal_new ();
 	__load_plugins (as);
@@ -47,6 +47,7 @@ static void __as_free(RAsmState *as) {
 	r_asm_free (as->a);
 	r_anal_free (as->anal);
 	r_lib_free (as->l);
+    	free (as);
 }
 
 static char *stackop2str(int type) {
@@ -361,9 +362,11 @@ static int rasm_disasm(RAsmState *as, char *buf, ut64 offset, int len, int bits,
 				op.size = 1;
 				r_asm_op_set_asm (&op, "invalid");
 			}
+			char *op_hex = r_asm_op_get_hex (&op);
 			printf ("0x%08" PFMT64x "  %2d %24s  %s\n",
-				as->a->pc, op.size, r_asm_op_get_hex (&op),
+				as->a->pc, op.size, op_hex,
 				r_asm_op_get_asm (&op));
+			free (op_hex);
 			ret += op.size;
 			r_asm_set_pc (as->a, offset + ret);
 		}

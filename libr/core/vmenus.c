@@ -154,9 +154,11 @@ R_API bool r_core_visual_esil(RCore *core) {
 		r_cons_printf ("r2's esil debugger:\n\n");
 		r_cons_printf ("pos: %d\n", x);
 		{
-			char *res = r_print_hexpair (core->print, r_asm_op_get_hex (&asmop), -1);
+			char *op_hex = r_asm_op_get_hex (&asmop);
+			char *res = r_print_hexpair (core->print, op_hex, -1);
 			r_cons_printf ("hex: %s\n"Color_RESET, res);
 			free (res);
+			free (op_hex);
 		}
 		{
 			char *op = colorize_asm_string (core, r_asm_op_get_asm (&asmop), analopType, core->offset);
@@ -297,9 +299,11 @@ R_API bool r_core_visual_bit_editor(RCore *core) {
 		r_cons_printf ("r2's bit editor:\n\n");
 		r_cons_printf ("offset: 0x%08"PFMT64x"\n"Color_RESET, core->offset + cur);
 		{
-			char *res = r_print_hexpair (core->print, r_asm_op_get_hex (&asmop), -1);
+			char *op_hex = r_asm_op_get_hex (&asmop);
+			char *res = r_print_hexpair (core->print, op_hex, -1);
 			r_cons_printf ("hex: %s\n"Color_RESET, res);
 			free (res);
+			free (op_hex);
 		}
 		r_cons_printf ("len: %d\n", asmop.size);
 		{
@@ -395,9 +399,11 @@ R_API bool r_core_visual_bit_editor(RCore *core) {
 		case 'Q':
 		case 'q':
 			{
-				char *res = r_print_hexpair (core->print, r_asm_op_get_hex (&asmop), -1);
+				char *op_hex = r_asm_op_get_hex (&asmop);
+				char *res = r_print_hexpair (core->print, op_hex, -1);
 				r_core_cmdf (core, "wx %02x%02x%02x%02x", buf[0], buf[1], buf[2], buf[3]);
 				free (res);
+				free (op_hex);
 			}
 			return false;
 		case 'H':
@@ -523,10 +529,10 @@ static int sdbforcb (void *p, const char *k, const char *v) {
 					pre = ">";
 				}
 				if (use_color && *pre == '>') {
-					r_cons_printf ("%s %s %s  %s\n", color_sel,
+					r_cons_printf ("%s %s %s  %s %10s\n", color_sel,
 						Color_RESET, pre, k+strlen (s), v);
 				} else {
-					r_cons_printf (" %s %s  %s\n",
+					r_cons_printf ("   %s %s %10s\n",
 						pre, k + strlen (s), v);
 				}
 				vt->t_ctr ++;
@@ -945,7 +951,6 @@ static void *show_class(RCore *core, int mode, int *idx, RBinClass *_c, const ch
 	RBinField *f, *fur = NULL;
 	int i = 0;
 	int skip = *idx - 10;
-	bool found = false;
 
 	switch (mode) {
 	case 'c':
@@ -1019,7 +1024,6 @@ static void *show_class(RCore *core, int mode, int *idx, RBinClass *_c, const ch
 			}
 			if (show_color) {
 				if (i == *idx) {
-					found = true;
 					const char *clr = Color_BLUE;
 					r_cons_printf (Color_GREEN ">>" Color_RESET " %02d %s0x%08"
 							PFMT64x Color_YELLOW " %s %s\n" Color_RESET,
@@ -1056,7 +1060,6 @@ static void *show_class(RCore *core, int mode, int *idx, RBinClass *_c, const ch
 			return mur;
 		}
 		r_cons_printf ("[hjkl_/cfM]> methods of %s\n\n", _c->name);
-		found = false;
 		r_list_foreach (_c->methods, iter, m) {
 			const char *name = m->dname? m->dname: m->name;
 			char *mflags;
@@ -1082,7 +1085,6 @@ static void *show_class(RCore *core, int mode, int *idx, RBinClass *_c, const ch
 					name += strlen (_c->name);
 				}
 				if (i == *idx) {
-					found = true;
 					const char *clr = Color_BLUE;
 					r_cons_printf (Color_GREEN ">>" Color_RESET " %02d %s0x%08"
 							PFMT64x Color_YELLOW " %s %s\n" Color_RESET,
@@ -1119,9 +1121,9 @@ R_API int r_core_visual_classes(RCore *core) {
 	int ch, index = 0;
 	char cmd[1024];
 	int mode = 'c';
-	RBinField *fur = NULL;
 	RBinClass *cur = NULL;
 	RBinSymbol *mur = NULL;
+	RBinField *fur = NULL;
 	void *ptr;
 	int oldcur = 0;
 	char *grep = NULL;
@@ -1364,7 +1366,7 @@ R_API int r_core_visual_view_rop(RCore *core) {
 
 	eprintf ("Searching ROP gadgets...\n");
 	char *ropstr = r_core_cmd_strf (core, "\"/Rl %s\" @e:scr.color=0", line);
-	RList *rops = r_str_split_list (ropstr, "\n");
+	RList *rops = r_str_split_list (ropstr, "\n", 0);
 	int delta = 0;
 	bool show_color = core->print->flags & R_PRINT_FLAGS_COLOR;
 	bool forceaddr = false;
@@ -1516,7 +1518,7 @@ R_API int r_core_visual_view_rop(RCore *core) {
 					free (ropstr);
 					ropstr = r_core_cmd_strf (core, "\"/Rl %s\" @e:scr.color=0", line);
 					r_list_free (rops);
-					rops = r_str_split_list (ropstr, "\n");
+					rops = r_str_split_list (ropstr, "\n", 0);
 				}
 			}
 			break;
@@ -2697,12 +2699,13 @@ static void variable_set_type (RCore *core, ut64 addr, int vindex, const char *t
 }
 
 // In visual mode, display function list
-static ut64 var_functions_show(RCore *core, int idx, int show) {
+static ut64 var_functions_show(RCore *core, int idx, int show, int cols) {
 	int wdelta = (idx > 5)? idx - 5: 0;
+	char *var_functions;
 	ut64 seek = core->offset;
 	ut64 addr = core->offset;
 	RAnalFunction *fcn;
-	int window, i = 0;
+	int window, i = 0, print_full_func;
 	RListIter *iter;
 
 	// Adjust the windows size automaticaly
@@ -2713,8 +2716,9 @@ static ut64 var_functions_show(RCore *core, int idx, int show) {
 	const char *color_fcn = core->cons->context->pal.fname;
 
 	r_list_foreach (core->anal->fcns, iter, fcn) {
+		print_full_func = true;
 		if (i >= wdelta) {
-			if (i> window+wdelta) {
+			if (i > window + wdelta - 1) {
 				r_cons_printf ("...\n");
 				break;
 			}
@@ -2722,17 +2726,34 @@ static ut64 var_functions_show(RCore *core, int idx, int show) {
 				addr = fcn->addr;
 			}
 			if (show) {
+				char *tmp;
 				if (color) {
-					r_cons_printf ("%c%c %s0x%08"PFMT64x"" Color_RESET" %4d %s%s"Color_RESET"\n",
+					var_functions = r_str_newf ("%c%c %s0x%08"PFMT64x"" Color_RESET" %4d %s%s"Color_RESET"",
 							(seek == fcn->addr)?'>':' ',
 							(idx==i)?'*':' ',
 							color_addr, fcn->addr, r_anal_fcn_realsize (fcn),
 							color_fcn, fcn->name);
 				} else {
-					r_cons_printf ("%c%c 0x%08"PFMT64x" %4d %s\n",
+					var_functions = r_str_newf ("%c%c 0x%08"PFMT64x" %4d %s",
 							(seek == fcn->addr)?'>':' ',
 							(idx==i)?'*':' ',
 							fcn->addr, r_anal_fcn_realsize (fcn), fcn->name);
+				}
+				if (var_functions) {
+					if (!r_cons_singleton ()->show_vals) {
+						int fun_len = r_str_ansi_len (var_functions);
+						int columns = fun_len > cols ? cols - 2 : cols;
+						tmp = r_str_ansi_crop (var_functions, 0, 0, columns, window);
+						if (r_str_ansi_len (tmp) < fun_len) {
+							r_cons_printf ("%s..%s\n", tmp, Color_RESET);
+							print_full_func = false;
+						}
+						r_free (tmp);
+					}
+					if (print_full_func) {
+						r_cons_println (var_functions);
+					}
+					r_free (var_functions);
 				}
 			}
 		}
@@ -2742,9 +2763,9 @@ static ut64 var_functions_show(RCore *core, int idx, int show) {
 }
 
 // In visual mode, display the variables.
-static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show) {
+static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show, int cols) {
 	int i = 0;
-	const ut64 addr = var_functions_show (core, idx, 0);
+	const ut64 addr = var_functions_show (core, idx, 0, cols);
 	RAnalFunction* fcn = r_anal_get_fcn_in (core->anal, addr, R_ANAL_FCN_TYPE_NULL);
 	int window;
 	int wdelta = (idx > 5) ? idx - 5 : 0;
@@ -2825,7 +2846,7 @@ static const char *cmd, *printCmds[lastPrintMode] = {
 static void r_core_visual_anal_refresh_column (RCore *core, int colpos) {
 	const ut64 addr = (level != 0 && level != 1)
 		? core->offset
-		: var_functions_show (core, option, 0);
+		: var_functions_show (core, option, 0, colpos);
 	// RAnalFunction* fcn = r_anal_get_fcn_in(core->anal, addr, R_ANAL_FCN_TYPE_NULL);
 	int h, w = r_cons_get_size (&h);
 	// int sz = (fcn)? R_MIN (r_anal_fcn_size (fcn), h * 15) : 16; // max instr is 15 bytes.
@@ -2850,14 +2871,66 @@ static void r_core_visual_anal_refresh_column (RCore *core, int colpos) {
 	free (cmdf);
 }
 
+static const char *help_fun_visual[] = {
+	"(a)", "analyze ", "(-)", "delete ", "(x)", "xrefs ", "(X)", "refs   j/k next/prev\n",
+	"(r)", "rename ",  "(c)", "calls ", "(d)", "definetab column (_) hud\n",
+	"(d)", "define ",  "(v)", "vars ", "(?)"," help ", "(:)", "shell " ,"(q)", "quit\n",
+	"(s)", "edit function signature.  \n\n",
+	NULL
+};
+
+static const char *help_var_visual[] = {
+	"(a)", "add " ,"(x)", "xrefs ", "(r)", "rename\n",
+	"(t)", "type ", "(g)", "go ", "(-)" ,"delete\n",
+	"(q)", "quit ", "(s)", "signature\n\n",
+	NULL
+};
+
+static const char *help_vv_visual[] = {
+	"j,k", "select next/prev item or scroll if tab pressed",
+	"J,K", "scroll next/prev page \"\"",
+	"h,q", "go back, quit",
+	"p,P", "switch next/prev print mode",
+	"v", "view selected function arguments and variables",
+	"x,X", "see xrefs to the selected function",
+	"tab", "toggle disasm column selection (to scroll in code)",
+	"!", "run 'afls' to sort all functions by address",
+	".", "seek to current function address",
+	":", "run r2 commands",
+	"_", "hud mode. same as: s $(afl~...)",
+	"enter", "enter function view (variables), xrefs",
+	NULL
+};
+
+static const char *help_vv_actions_visual[] = {
+	" functions:", "Add, Modify, Delete, Xrefs Calls Vars",
+	" variables:", "Add, Modify, Delete",
+	NULL
+};
+
+static void r_core_vmenu_append_help (RStrBuf *p, const char **help) {
+	int i;
+	RConsContext *cons_ctx = r_cons_singleton ()->context;
+	const char *pal_args_color = cons_ctx->color_mode ? cons_ctx->pal.args : "",
+		   *pal_help_color = cons_ctx->color_mode ? cons_ctx->pal.help : "",
+		   *pal_reset = cons_ctx->color_mode ? cons_ctx->pal.reset : "";
+
+	for (i = 0; help[i]; i += 2) {
+		r_strbuf_appendf (p, "%s%s %s%s%s",
+			 pal_args_color, help[i],
+			 pal_help_color, help[i + 1], pal_reset);
+	}
+}
+
 static ut64 r_core_visual_anal_refresh (RCore *core) {
 	if (!core) {
 		return 0LL;
 	}
 	ut64 addr;
+	RStrBuf *buf;
 	char old[1024];
 	bool color = r_config_get_i (core->config, "scr.color");
-	int cols = r_cons_get_size (NULL);
+	int h, cols = r_cons_get_size (&h);
 	old[0] = '\0';
 	addr = core->offset;
 	cols -= 50;
@@ -2873,6 +2946,7 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 	switch (level) {
 	// Show functions list help in visual mode
 	case 0:
+		buf = r_strbuf_new ("");
 		if (color) {
 			r_cons_strcat (core->cons->context->pal.prompt);
 		}
@@ -2884,28 +2958,48 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 		if (color) {
 			r_cons_strcat ("\n" Color_RESET);
 		}
-		r_cons_printf (
-			"(a) analyze (-) delete (x) xrefs (X) refs   j/k next/prev\n"
-			"(r) rename  (c) calls  (d) definetab column (_) hud\n"
-			"(d) define  (v) vars   (?) help  (:) shell  (q) quit\n"
-			"(s) edit function signature.  \n\n");
-		addr = var_functions_show (core, option, 1);
+		r_core_vmenu_append_help (buf, help_fun_visual);
+		r_cons_printf ("%s", r_strbuf_drain (buf));
+		addr = var_functions_show (core, option, 1, cols);
 		break;
 	case 1:
-		r_cons_printf (
-			"-[ variables ]----- 0x%08"PFMT64x"\n"
-			"(a) add    (x) xrefs     (r) rename\n"
-			"(t) type   (g) go        (-) delete\n"
-			"(q) quit   (s) signature\n\n", addr);
-		addr = var_variables_show (core, option, &variable_option, 1);
+		buf = r_strbuf_new ("");
+		if (color) {
+			r_cons_strcat (core->cons->context->pal.prompt);
+		}
+		r_cons_printf ("-[ variables ]----- 0x%08"PFMT64x"", addr);
+		if (color) {
+			r_cons_strcat ("\n" Color_RESET);
+		}
+		r_core_vmenu_append_help (buf, help_var_visual);
+		r_cons_printf ("%s", r_strbuf_drain (buf));
+		addr = var_variables_show (core, option, &variable_option, 1, cols);
 		// var_index_show (core->anal, fcn, addr, option);
 		break;
 	case 2:
 		r_cons_printf ("Press 'q' to quit call refs\n");
+		if (color) {
+			r_cons_strcat (core->cons->context->pal.prompt);
+		}
 		r_cons_printf ("-[ calls ]----------------------- 0x%08"PFMT64x" (TODO)\n", addr);
+		if (color) {
+			r_cons_strcat ("\n" Color_RESET);
+		}
 		// TODO: filter only the callrefs. but we cant grep here
 		sprintf (old, "afi @ 0x%08"PFMT64x, addr);
-		r_core_cmd0 (core, old);
+		char *output = r_core_cmd_str (core, old);
+		if (output) {
+			// 'h - 2' because we have two new lines in r_cons_printf
+			if (!r_cons_singleton ()->show_vals) {
+				char *out = r_str_ansi_crop(output, 0, 0, cols, h - 2);
+				r_cons_printf ("\n%s\n", out);
+				free (out);
+				R_FREE (output);
+			} else {
+				r_cons_printf ("\n%s\n", output);
+				R_FREE (output);
+			}
+		}
 		break;
 	default:
 		// assert
@@ -2916,7 +3010,7 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 }
 
 static void r_core_visual_anal_refresh_oneshot (RCore *core) {
-	r_core_task_enqueue_oneshot (core, (RCoreTaskOneShot) r_core_visual_anal_refresh, core);
+	r_core_task_enqueue_oneshot (&core->tasks, (RCoreTaskOneShot) r_core_visual_anal_refresh, core);
 }
 
 static void r_core_visual_debugtraces_help(RCore *core) {
@@ -3071,27 +3165,19 @@ R_API void r_core_visual_anal(RCore *core, const char *input) {
 		}
 		ch = r_cons_arrow_to_hjkl (ch); // get ESC+char, return 'hjkl' char
 		switch (ch) {
+		case '[':
+			r_cons_singleton ()->show_vals = true;
+			break;
+		case ']':
+			r_cons_singleton ()->show_vals = false;
+			break;
 		case '?':
 			r_cons_clear00 ();
-			r_cons_printf (
-				"Usage: vv\n"
-				"Actions supported:\n"
-				" functions: Add, Modify, Delete, Xrefs Calls Vars\n"
-				" variables: Add, Modify, Delete\n"
-				"Keys:\n"
-				" j,k     select next/prev item or scroll if tab pressed\n"
-				" J,K     scroll next/prev page \"\"\n"
-				" h,q     go back, quit\n"
-				" p,P     switch next/prev print mode\n"
-				" v       view selected function arguments and variables\n"
-				" x,X     see xrefs to the selected function\n"
-				" tab     toggle disasm column selection (to scroll in code)\n"
-				" !       run 'afls' to sort all functions by address\n"
-				" .       seek to current function address\n"
-				" :       run r2 commands\n"
-				" _       hud mode. same as: s $(afl~...)\n"
-				" enter   enter function view (variables), xrefs\n"
-			);
+			RStrBuf *buf = r_strbuf_new ("");
+			r_cons_println ("|Usage: vv");
+			r_core_visual_append_help (buf, "Actions supported", help_vv_actions_visual);
+			r_core_visual_append_help (buf, "Keys", help_vv_visual);
+			r_cons_printf ("%s", r_strbuf_drain (buf));
 			r_cons_flush ();
 			r_cons_any_key (NULL);
 			break;
@@ -3308,7 +3394,22 @@ R_API void r_core_visual_anal(RCore *core, const char *input) {
 				}
 			}
 			break;
-		case 'g':
+		case 'g': {
+			r_core_visual_showcursor (core, true);
+			r_core_visual_offset (core);        // change the seek to selected offset
+			RListIter *iter;		   // change the current option to selected seek
+			RAnalFunction *fcn;
+			int i = 0;
+			r_list_foreach (core->anal->fcns, iter, fcn) {
+				if (core->offset ==  fcn->addr){
+					option = i;
+				}
+				i++;
+			}
+			r_core_visual_showcursor (core, false);
+		}
+		        break;
+		case 'G':
 			r_core_seek (core, addr, SEEK_SET);
 			goto beach;
 		case ' ':
@@ -3477,7 +3578,7 @@ R_API void r_core_visual_define(RCore *core, const char *args, int distance) {
 	if (core->print->cur_enabled) {
 		int cur = core->print->cur;
 		if (core->print->ocur != -1) {
-			plen = R_ABS (core->print->cur- core->print->ocur)+1;
+			plen = R_ABS (core->print->cur - core->print->ocur) + 1;
 			if (core->print->ocur<cur) {
 				cur = core->print->ocur;
 			}
@@ -3498,14 +3599,15 @@ R_API void r_core_visual_define(RCore *core, const char *args, int distance) {
 		," $    define flag size"
 		," 1    edit bits"
 		," a    assembly"
-		," b    set as byte"
-		," B    set as short word (2 bytes)"
-		," c    set as code"
+		," b    as byte (1 byte)"
+		," B    define half word (16 bit, 2 byte size)"
+		," c    as code (unset any data / string / format) in here"
 		," C    define flag color (fc)"
 		," d    set as data"
 		," e    end of function"
 		," f    analyze function"
 		," F    format"
+		," h    define hint (for half-word, see 'B')"
 		," i    (ahi) immediate base (b(in), o(ct), d(ec), h(ex), s(tr))"
 		," I    (ahi1) immediate base (b(in), o(ct), d(ec), h(ex), s(tr))"
 		," j    merge down (join this and next functions)"
@@ -3607,9 +3709,9 @@ onemoretime:
 		define_data_ntimes (core, off, rep, R_BYTE_DATA);
 		wordsize = 1;
 		break;
-	case 'B':
+	case 'B': // "VdB"
 		if (plen != core->blocksize) {
-			rep = plen;
+			rep = plen / 2;
 		}
 		define_data_ntimes (core, off, rep, R_WORD_DATA);
 		wordsize = 2;
@@ -3722,7 +3824,7 @@ onemoretime:
 				r_cons_flush ();
 				r_line_set_prompt ("color: ");
 				if (r_cons_fgets (cmd, sizeof (cmd)-1, 0, NULL) > 0) {
-					r_flag_color (core->flags, item, cmd);
+					r_flag_item_set_color (item, cmd);
 					r_cons_set_raw (1);
 					r_cons_show_cursor (false);
 				}
@@ -3777,9 +3879,9 @@ onemoretime:
 		eprintf ("TODO: merge up\n");
 		r_cons_any_key (NULL);
 		break;
+	// very weak and incomplete
 	case 'h': // "Vdh"
 		handleHints (core);
-		//r_core_cmdf (core, "?i highlight;e scr.highlight=`yp` @ 0x%08"PFMT64x, off);
 		break;
 	case 'r': // "Vdr"
 		r_core_cmdf (core, "?i new function name;afn `yp` @ 0x%08"PFMT64x, off);

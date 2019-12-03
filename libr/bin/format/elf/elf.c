@@ -17,6 +17,7 @@
 #define IFINT if (0)
 
 #define MIPS_PLT_OFFSET 108
+#define RISCV_PLT_OFFSET 40
 
 #define ELF_PAGE_MASK 0xFFFFFFFFFFFFF000LL
 #define ELF_PAGE_SIZE 12
@@ -1353,7 +1354,9 @@ static HtUP *rel_cache_new(ELFOBJ *bin) {
 			goto out;
 		}
 
-		ht_up_insert (rel_cache, REL_SYM, rel);
+		if (!ht_up_insert (rel_cache, REL_SYM, rel)) {
+			free (rel);
+		}
 	}
 	return rel_cache;
 out:
@@ -1602,6 +1605,36 @@ static ut64 get_import_addr_x86(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSectio
 	}
 }
 
+static ut64 get_import_addr_riscv(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
+	RBinElfSection *s = get_section_by_name (bin, ".rela.plt");
+	if (s) {
+		ut8 buf[1024];
+		const ut8 *base;
+		ut64 plt_addr = s->rva + s->size;
+		int len = r_buf_read_at (bin->b, s->offset + s->size, buf, sizeof (buf));
+		if (len != sizeof (buf)) {
+			// oops
+		}
+		base = r_mem_mem_aligned (buf, sizeof (buf), (const ut8 *)"\x3c\x0f\x00", 3, 4);
+		if (base) {
+			plt_addr += (int)(size_t) (base - buf);
+		} else {
+			plt_addr += RISCV_PLT_OFFSET; // HARDCODED HACK
+		}
+		plt_addr += rel->k * 16;
+		return plt_addr;
+	}
+	if (plt_section) {
+		const int sizeOfProcedureLinkageTable = 32;
+		const int sizeOfPltEntry = 16;
+		return plt_section->rva + sizeOfProcedureLinkageTable + (rel->k * sizeOfPltEntry);
+	}
+	eprintf ("Unsupported relocs type %" PFMT64u " for arch %d\n",
+		(ut64)REL_TYPE, bin->ehdr.e_machine);
+	return UT64_MAX;
+}
+
+
 static ut64 get_import_addr_mips(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSection *plt_section) {
 	RBinElfSection *s = get_section_by_name (bin, ".rela.plt");
 	if (s) {
@@ -1626,7 +1659,6 @@ static ut64 get_import_addr_mips(ELFOBJ *bin, struct ht_rel_t *rel, RBinElfSecti
 		const int sizeOfPltEntry = 16;
 		return plt_section->rva + sizeOfProcedureLinkageTable + (rel->k * sizeOfPltEntry);
 	}
-
 	eprintf ("Unsupported relocs type %" PFMT64u " for arch %d\n",
 		(ut64)REL_TYPE, bin->ehdr.e_machine);
 	return UT64_MAX;
@@ -1664,6 +1696,8 @@ static ut64 get_import_addr(ELFOBJ *bin, int sym) {
 	case EM_SPARCV9:
 	case EM_SPARC32PLUS:
 		return get_import_addr_sparc (bin, rel, plt_section);
+	case EM_RISCV:
+		return get_import_addr_riscv (bin, rel, plt_section);
 	case EM_ARM:
 	case EM_AARCH64:
 		return get_import_addr_arm (bin, rel, plt_section);
@@ -1827,10 +1861,21 @@ ut64 Elf_(r_bin_elf_get_fini_offset)(ELFOBJ *bin) {
 	return 0;
 }
 
+static bool isExecutable(ELFOBJ *bin) {
+	switch (bin->ehdr.e_type) {
+	case ET_EXEC: return true;
+	case ET_DYN:  return true;
+	}
+	return false;
+}
+
 ut64 Elf_(r_bin_elf_get_entry_offset)(ELFOBJ *bin) {
 	r_return_val_if_fail (bin, UT64_MAX);
 	ut64 entry = bin->ehdr.e_entry;
 	if (!entry) {
+		if (!isExecutable (bin)) {
+			return UT64_MAX;
+		}
 		entry = Elf_(r_bin_elf_get_section_offset)(bin, ".init.text");
 		if (entry != UT64_MAX) {
 			return entry;
@@ -2237,7 +2282,7 @@ char* Elf_(r_bin_elf_get_machine_name)(ELFOBJ *bin) {
 	case EM_MICROBLAZE:    return strdup ("Xilinx MicroBlaze");
 	case EM_RISCV:         return strdup ("RISC V");
 	case EM_VIDEOCORE3:    return strdup ("VideoCore III");
-	// case EM_VIDEOCORE4:    return strdup ("VideoCore IV");  // Nonstandard
+	case EM_VIDEOCORE4:    return strdup ("VideoCore IV");
 	case EM_LATTICEMICO32: return strdup ("RISC processor for Lattice FPGA architecture");
 	case EM_SE_C17:        return strdup ("Seiko Epson C17 family");
 	case EM_TI_C6000:      return strdup ("The Texas Instruments TMS320C6000 DSP family");
@@ -2249,12 +2294,12 @@ char* Elf_(r_bin_elf_get_machine_name)(ELFOBJ *bin) {
 	case EM_CYPRESS_M8C:   return strdup ("Cypress M8C microprocessor");
 	case EM_R32C:          return strdup ("Renesas R32C series microprocessors");
 	case EM_TRIMEDIA:      return strdup ("NXP Semiconductors TriMedia architecture family");
-	// case EM_QDSP6:         return strdup ("QUALCOMM DSP6 Processor");  // Nonstandard
+	case EM_QDSP6:         return strdup ("QUALCOMM DSP6 Processor");  // Nonstandard
 	case EM_8051:          return strdup ("Intel 8051 and variants");
 	case EM_STXP7X:        return strdup ("STMicroelectronics STxP7x family of configurable and extensible RISC processors");
 	case EM_NDS32:         return strdup ("Andes Technology compact code size embedded RISC processor family");
 	case EM_ECOG1:         return strdup ("Cyan Technology eCOG1X family");
-	// case EM_ECOG1X:        return strdup ("Cyan Technology eCOG1X family");
+	// case EM_ECOG1X:        return strdup ("Cyan Technology eCOG1X family");  // Nonstandard
 	case EM_MAXQ30:        return strdup ("Dallas Semiconductor MAXQ30 Core Micro-controllers");
 	case EM_XIMO16:        return strdup ("New Japan Radio (NJR) 16-bit DSP Processor");
 	case EM_MANIK:         return strdup ("M2000 Reconfigurable RISC Microprocessor");
@@ -2268,12 +2313,12 @@ char* Elf_(r_bin_elf_get_machine_name)(ELFOBJ *bin) {
 	case EM_SLE9X:         return strdup ("Infineon Technologies SLE9X core");
 	case EM_L10M:          return strdup ("Intel L10M");
 	case EM_K10M:          return strdup ("Intel K10M");
-	// case EM_AARCH64:       return strdup ("ARM 64-bit architecture (AARCH64)");
+	// case EM_AARCH64:       return strdup ("ARM 64-bit architecture (AARCH64)");  // Nonstandard
 	case EM_AVR32:         return strdup ("Atmel Corporation 32-bit microprocessor family");
 	case EM_STM8:          return strdup ("STMicroeletronics STM8 8-bit microcontroller");
 	case EM_TILE64:        return strdup ("Tilera TILE64 multicore architecture family");
 	case EM_TILEPRO:       return strdup ("Tilera TILEPro multicore architecture family");
-	// case EM_MICROBLAZE:    return strdup ("Xilinx MicroBlaze 32-bit RISC soft processor core");
+	// case EM_MICROBLAZE:    return strdup ("Xilinx MicroBlaze 32-bit RISC soft processor core");  // Nonstandard
 	case EM_CUDA:          return strdup ("NVIDIA CUDA architecture");
 	case EM_TILEGX:        return strdup ("Tilera TILE-Gx multicore architecture family");
 	case EM_CLOUDSHIELD:   return strdup ("CloudShield architecture family");
@@ -2284,7 +2329,7 @@ char* Elf_(r_bin_elf_get_machine_name)(ELFOBJ *bin) {
 	case EM_RL78:          return strdup ("Renesas RL78 family");
 	case EM_VIDEOCORE5:    return strdup ("Broadcom VideoCore V processor");
 	case EM_78KOR:         return strdup ("Renesas 78KOR family");
-	case EM_56800EX:       return strdup ("Freescale 56800EX Digital Signal Controller (DSC)");
+	// case EM_56800EX:       return strdup ("Freescale 56800EX Digital Signal Controller (DSC)");  // Nonstandard
 	case EM_BA1:           return strdup ("Beyond BA1 CPU architecture");
 	case EM_BA2:           return strdup ("Beyond BA2 CPU architecture");
 	case EM_XCORE:         return strdup ("XMOS xCORE processor family");
@@ -2315,11 +2360,8 @@ char* Elf_(r_bin_elf_get_machine_name)(ELFOBJ *bin) {
 }
 
 char* Elf_(r_bin_elf_get_file_type)(ELFOBJ *bin) {
-	ut32 e_type;
-	if (!bin) {
-		return NULL;
-	}
-	e_type = (ut32)bin->ehdr.e_type; // cast to avoid warn in iphone-gcc, must be ut16
+	r_return_val_if_fail (bin, NULL);
+	ut32 e_type = (ut32)bin->ehdr.e_type; // cast to avoid warn in iphone-gcc, must be ut16
 	switch (e_type) {
 	case ET_NONE: return strdup ("NONE (None)");
 	case ET_REL:  return strdup ("REL (Relocatable file)");
@@ -2898,6 +2940,7 @@ static bool is_special_arm_symbol(ELFOBJ *bin, Elf_(Sym) *sym, const char *name)
 	case 'a':
 	case 't':
 	case 'd':
+	case 'x':
 		return (name[2] == '\0' || name[2] == '.') &&
 			ELF_ST_TYPE (sym->st_info) == STT_NOTYPE &&
 			ELF_ST_BIND (sym->st_info) == STB_LOCAL &&
@@ -2910,6 +2953,7 @@ static bool is_special_arm_symbol(ELFOBJ *bin, Elf_(Sym) *sym, const char *name)
 static bool is_special_symbol(ELFOBJ *bin, Elf_(Sym) *sym, const char *name) {
 	switch (bin->ehdr.e_machine) {
 	case EM_ARM:
+	case EM_AARCH64:
 		return is_special_arm_symbol (bin, sym, name);
 	default:
 		return false;
@@ -3314,10 +3358,10 @@ RBinSymbol *Elf_(_r_bin_elf_convert_symbol)(struct Elf_(r_bin_elf_obj_t) *bin,
 	if (!(ptr = R_NEW0 (RBinSymbol))) {
 		return NULL;
 	}
-	ptr->name = symbol->name[0] ? r_str_newf (namefmt, &symbol->name[0]): strdup ("");
-	ptr->forwarder = r_str_const ("NONE");
-	ptr->bind = r_str_const (symbol->bind);
-	ptr->type = r_str_const (symbol->type);
+	ptr->name = symbol->name[0] ? r_str_newf (namefmt, &symbol->name[0]) : strdup ("");
+	ptr->forwarder = "NONE";
+	ptr->bind = symbol->bind;
+	ptr->type = symbol->type;
 	ptr->paddr = paddr;
 	ptr->vaddr = vaddr;
 	ptr->size = symbol->size;
@@ -3670,7 +3714,7 @@ ELFOBJ* Elf_(r_bin_elf_new_buf)(RBuffer *buf, bool verbose) {
 	ELFOBJ *bin = R_NEW0 (ELFOBJ);
 	if (bin) {
 		bin->kv = sdb_new0 ();
-		bin->size = (ut32)r_buf_size (buf);
+		bin->size = r_buf_size (buf);
 		bin->verbose = verbose;
 		bin->b = r_buf_ref (buf);
 		if (!elf_init (bin)) {

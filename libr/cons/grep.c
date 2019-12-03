@@ -82,10 +82,7 @@ static void parse_grep_expression(const char *str) {
 	}
 	RCons *cons = r_cons_singleton ();
 	RConsGrep *grep = &cons->context->grep;
-	memset (grep, 0, sizeof (RConsGrep));
 	sorted_column = 0;
-	grep->sort = -1;
-	grep->line = -1;
 	bool first = true;
 	while (*str) {
 		switch (*str) {
@@ -288,7 +285,7 @@ while_end:
 			if (p[2]) {
 				grep->l_line = r_num_get (cons->num, p + 2);
 			} else {
-				grep->l_line = -1;
+				grep->l_line = 0;
 			}
 		}
 	}
@@ -319,13 +316,13 @@ while_end:
 				eprintf ("grep string too long\n");
 				continue;
 			}
-			strncpy (grep->strings[grep->nstrings],
-				optr, R_CONS_GREP_WORD_SIZE - 1);
 			grep->nstrings++;
 			if (grep->nstrings > R_CONS_GREP_WORDS - 1) {
 				eprintf ("too many grep strings\n");
 				break;
 			}
+			strncpy (grep->strings[grep->nstrings - 1],
+				optr, R_CONS_GREP_WORD_SIZE - 1);
 		} while (ptr);
 	} else {
 		grep->str = strdup (ptr);
@@ -587,7 +584,7 @@ R_API void r_cons_grepbuf() {
 		if (grep->f_line < 0) {
 			grep->f_line = total_lines + grep->f_line;
 		}
-		if (grep->l_line < 0) {
+		if (grep->l_line <= 0) {
 			grep->l_line = total_lines + grep->l_line;
 		}
 	}
@@ -672,6 +669,7 @@ R_API void r_cons_grepbuf() {
 		snprintf (cons->context->buffer, cons->context->buffer_len, "%d\n", cnt);
 		cons->context->buffer_len = strlen (cons->context->buffer);
 		cons->num->value = cons->lines;
+		r_strbuf_free (ob);
 		return;
 	}
 	
@@ -844,12 +842,13 @@ R_API int r_cons_grep_line(char *buf, int len) {
 }
 
 static const char *gethtmlrgb(const char *str) {
-	static char buf[32];
-	ut8 r, g, b;
-	r = g = b = 0;
-	r_cons_rgb_parse (str, &r, &g, &b, 0);
-	sprintf (buf, "#%02x%02x%02x", r, g, b);
-	return buf;
+	ut8 r = 0, g = 0, b = 0;
+	if (r_cons_rgb_parse (str, &r, &g, &b, 0)) {
+		static char buf[32];
+		sprintf (buf, "#%02x%02x%02x", r, g, b);
+		return buf;
+	}
+	return "";
 }
 
 static const char *gethtmlcolor(const char ptrch, const char *def) {
@@ -976,15 +975,20 @@ R_API char *r_cons_html_filter(const char *ptr, int *newlen) {
 				continue;
 				// reset color
 			} else if (ptr[0] == '3' && ptr[2] == 'm') {
-				r_strbuf_appendf (res, "<font color='%s'>", gethtmlcolor (ptr[1], inv? "#fff": "#000"));
+				const char *htmlColor = gethtmlcolor (ptr[1], inv? "#fff":NULL);
+				if (htmlColor) {
+					r_strbuf_appendf (res, "<font color='%s'>", htmlColor);
+				}
 				tag_font = true;
 				ptr = ptr + 1;
 				str = ptr + 2;
 				esc = 0;
 				continue;
 			} else if (ptr[0] == '4' && ptr[2] == 'm') {
-				r_strbuf_appendf (res, "<font style='background-color:%s'>",
-					gethtmlcolor (ptr[1], inv? "#000": "#fff"));
+				const char *htmlColor = gethtmlcolor (ptr[1], inv? "#000":NULL);
+				if (htmlColor) {
+					r_strbuf_appendf (res, "<font style='background-color:%s'>", htmlColor);
+				}
 				tag_font = true;
 				ptr = ptr + 1;
 				str = ptr + 2;

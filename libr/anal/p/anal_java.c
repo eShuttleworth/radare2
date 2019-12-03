@@ -203,7 +203,7 @@ static int java_linear_sweep(RAnal *anal, RAnalState *state, ut64 addr) {
 	return 0;
 }
 
-static int handle_bb_cf_recursive_descent (RAnal *anal, RAnalState *state) {
+static int handle_bb_cf_recursive_descent(RAnal *anal, RAnalState *state) {
 	RAnalBlock *bb = state->current_bb;
 	ut64 addr = 0;
 	int result = 0;
@@ -319,7 +319,7 @@ static int handle_bb_cf_recursive_descent (RAnal *anal, RAnalState *state) {
 			r_list_foreach (bb->switch_op->cases, iter, caseop) {
 				if (caseop) {
 					if (r_anal_state_addr_is_valid (state, caseop->jump) ) {
-						jmp_list = r_anal_ex_perform_analysis ( anal, state, caseop->jump );
+						jmp_list = r_anal_ex_perform_analysis (anal, state, caseop->jump );
 						if (jmp_list) {
 							caseop->jumpbb = (RAnalBlock *)r_list_get_n (jmp_list, 0);
 						}
@@ -609,7 +609,7 @@ static int java_analyze_fns_from_buffer( RAnal *anal, ut64 start, ut64 end, int 
 		ut64 length = buf_len - offset;
 
 		RAnalFunction *fcn = r_anal_fcn_new ();
-		fcn->cc = r_str_const (r_anal_cc_default (anal));
+		fcn->cc = r_str_constpool_get (&anal->constpool, r_anal_cc_default (anal));
 		result = analyze_from_code_buffer ( anal, fcn, addr, buffer+offset, length );
 		if (result == R_ANAL_RET_ERROR) {
 			eprintf ("Failed to parse java fn: %s @ 0x%04"PFMT64x"\n", fcn->name, fcn->addr);
@@ -658,7 +658,7 @@ static int java_analyze_fns( RAnal *anal, ut64 start, ut64 end, int reftype, int
 			    (check_addr_less_start (method, end) ||
 			     check_addr_in_code (method, end))) {
 				RAnalFunction *fcn = r_anal_fcn_new ();
-				fcn->cc = r_str_const (r_anal_cc_default (anal));
+				fcn->cc = r_str_constpool_get (&anal->constpool, r_anal_cc_default (anal));
 				java_set_function_prototype (anal, fcn, method);
 				result = analyze_from_code_attr (anal, fcn, method, loadaddr);
 				if (result == R_ANAL_RET_ERROR) {

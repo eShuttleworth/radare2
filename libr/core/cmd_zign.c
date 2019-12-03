@@ -160,6 +160,16 @@ static bool addFcnVars(RCore *core, RAnalFunction *fcn, const char *name) {
 	return retval;
 }
 
+static bool addFcnTypes(RCore *core, RAnalFunction *fcn, const char *name) {
+	RList *types = r_anal_types_from_fcn (core->anal, fcn);
+	if (!types) {
+		return false;
+	}
+	bool retval = r_sign_add_types (core->anal, name, types);
+	r_list_free (types);
+	return retval;
+}
+
 #if 0
 static char *getFcnComments(RCore *core, RAnalFunction *fcn) {
 	// XXX this is slow as hell on big binaries
@@ -173,13 +183,22 @@ static char *getFcnComments(RCore *core, RAnalFunction *fcn) {
 #endif
 
 static void addFcnZign(RCore *core, RAnalFunction *fcn, const char *name) {
+	char *ptr = NULL;
+	char *zignspace = NULL;
 	char *zigname = NULL;
 	const RSpace *curspace = r_spaces_current (&core->anal->zign_spaces);
+	int len = 0;
 
 	if (name) {
 		zigname = r_str_new (name);
 	} else {
-		if (curspace) {
+		// If the user has set funtion names containing a single ':' then we assume
+		// ZIGNSPACE:FUNCTION, and for now we only support the 'zg' command
+		if ((ptr = strchr (fcn->name, ':')) != NULL) {
+			len = ptr - fcn->name;
+			zignspace = r_str_newlen (fcn->name, len);
+			r_spaces_push (&core->anal->zign_spaces, zignspace);
+		} else if (curspace) {
 			zigname = r_str_newf ("%s:", curspace->name);
 		}
 		zigname = r_str_appendf (zigname, "%s", fcn->name);
@@ -190,6 +209,7 @@ static void addFcnZign(RCore *core, RAnalFunction *fcn, const char *name) {
 	addFcnXRefs (core, fcn, zigname);
 	addFcnRefs (core, fcn, zigname);
 	addFcnVars (core, fcn, zigname);
+	addFcnTypes (core, fcn, zigname);
 	addFcnHash (core, fcn, zigname);
 	if (strcmp (zigname, fcn->name)) {
 		r_sign_add_name (core->anal, zigname, fcn->name);
@@ -204,6 +224,10 @@ static void addFcnZign(RCore *core, RAnalFunction *fcn, const char *name) {
 	r_sign_add_addr (core->anal, zigname, fcn->addr);
 
 	free (zigname);
+	if (zignspace) {
+		r_spaces_pop (&core->anal->zign_spaces);
+		free (zignspace);
+	}
 }
 
 static bool parseGraphMetrics(const char *args0, int nargs, RSignGraph *graph) {
@@ -390,6 +414,23 @@ static bool addVarsZign(RCore *core, const char *name, const char *args0, int na
 	return retval;
 }
 
+static bool addTypesZign(RCore *core, const char *name, const char *args0, int nargs) {
+       int i = 0;
+       if (nargs < 1) {
+               eprintf ("error: invalid syntax\n");
+               return false;
+       }
+
+       RList *types = r_list_newf ((RListFree) free);
+       for (i = 0; i < nargs; i++) {
+               r_list_append (types, r_str_new (r_str_word_get0 (args0, i)));
+       }
+
+       bool retval = r_sign_add_types (core->anal, name, types);
+       r_list_free (types);
+       return retval;
+}
+
 static bool addZign(RCore *core, const char *name, int type, const char *args0, int nargs) {
 	switch (type) {
 	case R_SIGN_BYTES:
@@ -409,6 +450,8 @@ static bool addZign(RCore *core, const char *name, int type, const char *args0, 
 		return addXRefsZign (core, name, args0, nargs);
 	case R_SIGN_VARS:
 		return addVarsZign (core, name, args0, nargs);
+	case R_SIGN_TYPES:
+		return addTypesZign (core, name, args0, nargs);
 	case R_SIGN_BBHASH:
 		return addHashZign (core, name, type, args0, nargs);
 	default:
@@ -805,6 +848,7 @@ static bool search(RCore *core, bool rad, bool only_func) {
 	struct ctxSearchCB offset_match_ctx = { core, rad, 0, "offset" };
 	struct ctxSearchCB refs_match_ctx = { core, rad, 0, "refs" };
 	struct ctxSearchCB hash_match_ctx = { core, rad, 0, "bbhash" };
+	struct ctxSearchCB types_match_ctx = { core, rad, 0, "types" };
 
 	const char *zign_prefix = r_config_get (core->config, "zign.prefix");
 	int mincc = r_config_get_i (core->config, "zign.mincc");
@@ -814,6 +858,7 @@ static bool search(RCore *core, bool rad, bool only_func) {
 	bool useOffset = r_config_get_i (core->config, "zign.offset");
 	bool useRefs = r_config_get_i (core->config, "zign.refs");
 	bool useHash = r_config_get_i (core->config, "zign.hash");
+	bool useTypes = r_config_get_i (core->config, "zign.types");
 	int maxsz = r_config_get_i (core->config, "zign.maxsz");
 
 	if (rad) {
@@ -839,7 +884,8 @@ static bool search(RCore *core, bool rad, bool only_func) {
 	}
 
 	// Function search
-	if (useGraph || useOffset || useRefs || useHash || (useBytes && only_func)) {
+	// TODO (oxcabe): This big conditionals should be refactored into a variable
+	if (useGraph || useOffset || useRefs || useHash || (useBytes && only_func) || useTypes) {
 		eprintf ("[+] searching function metrics\n");
 		r_cons_break_push (NULL, NULL);
 		int count = 0;
@@ -874,6 +920,9 @@ static bool search(RCore *core, bool rad, bool only_func) {
 				int fcnlen = r_anal_fcn_realsize (fcni);
 				int len = R_MIN (core->io->addrbytes * fcnlen, maxsz);
 				retval &= searchRange2 (core, ss, fcni->addr, fcni->addr + len, rad, &bytes_search_ctx);
+			}
+			if (useTypes) {
+				r_sign_match_types (core->anal, fcni, fcnMatchCB, &types_match_ctx);
 			}
 			count ++;
 #if 0
@@ -967,6 +1016,7 @@ static int cmdCheck(void *data, const char *input) {
 	struct ctxSearchCB offset_match_ctx = { core, rad, 0, "offset" };
 	struct ctxSearchCB refs_match_ctx = { core, rad, 0, "refs" };
 	struct ctxSearchCB hash_match_ctx = { core, rad, 0, "bbhash" };
+	struct ctxSearchCB types_match_ctx = { core, rad, 0, "types" };
 
 	const char *zign_prefix = r_config_get (core->config, "zign.prefix");
 	int minsz = r_config_get_i (core->config, "zign.minsz");
@@ -976,6 +1026,7 @@ static int cmdCheck(void *data, const char *input) {
 	bool useOffset = r_config_get_i (core->config, "zign.offset");
 	bool useRefs = r_config_get_i (core->config, "zign.refs");
 	bool useHash = r_config_get_i (core->config, "zign.hash");
+	bool useTypes = r_config_get_i (core->config, "zign.types");
 
 	if (rad) {
 		r_cons_printf ("fs+%s\n", zign_prefix);
@@ -999,7 +1050,7 @@ static int cmdCheck(void *data, const char *input) {
 	}
 
 	// Function search
-	if (useGraph || useOffset || useRefs || useHash) {
+	if (useGraph || useOffset || useRefs || useHash || useTypes) {
 		eprintf ("[+] searching function metrics\n");
 		r_cons_break_push (NULL, NULL);
 		r_list_foreach (core->anal->fcns, iter, fcni) {
@@ -1018,6 +1069,9 @@ static int cmdCheck(void *data, const char *input) {
 				}
 				if (useHash){
 					r_sign_match_hash (core->anal, fcni, fcnMatchCB, &hash_match_ctx);
+				}
+				if (useTypes) {
+					r_sign_match_types (core->anal, fcni, fcnMatchCB, &types_match_ctx);
 				}
 				break;
 			}
@@ -1095,7 +1149,7 @@ static int cmd_zign(void *data, const char *input) {
 	case '-':
 		r_sign_delete (core->anal, input + 1);
 		break;
-	case '.':
+	case '.': // "z."
 		return cmdCheck (data, input + 1);
 	case 'o': // "zo"
 		return cmdOpen (data, input + 1);

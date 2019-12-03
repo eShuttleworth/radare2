@@ -212,6 +212,13 @@ static int main_help(int line) {
 
 static int main_print_var(const char *var_name) {
 	int i = 0;
+#ifdef __WINDOWS__
+	char *incdir = r_str_r2_prefix (R2_INCDIR);
+	char *libdir = r_str_r2_prefix (R2_LIBDIR);
+#else
+	char *incdir = strdup (R2_INCDIR);
+	char *libdir = strdup (R2_LIBDIR);
+#endif
 	char *confighome = r_str_home (R2_HOME_CONFIGDIR);
 	char *datahome = r_str_home (R2_HOME_DATADIR);
 	char *cachehome = r_str_home (R2_HOME_CACHEDIR);
@@ -226,8 +233,8 @@ static int main_print_var(const char *var_name) {
 		{ "R2_PREFIX", R2_PREFIX },
 		{ "R2_MAGICPATH", magicpath },
 		{ "R2_PREFIX", R2_PREFIX },
-		{ "R2_INCDIR", R2_INCDIR },
-		{ "R2_LIBDIR", R2_LIBDIR },
+		{ "R2_INCDIR", incdir },
+		{ "R2_LIBDIR", libdir },
 		{ "R2_LIBEXT", R_LIB_EXT },
 		{ "R2_RCONFIGHOME", confighome },
 		{ "R2_RDATAHOME", datahome },
@@ -255,6 +262,8 @@ static int main_print_var(const char *var_name) {
 			i++;
 		}
 	}
+	free (incdir);
+	free (libdir);
 	free (confighome);
 	free (datahome);
 	free (cachehome);
@@ -301,53 +310,6 @@ static RThreadFunctionRet rabin_delegate(RThread *th) {
 	return R_TH_STOP;
 }
 #endif
-
-static void radare2_rc(RCore *r) {
-	char* env_debug = r_sys_getenv ("R_DEBUG");
-	bool has_debug = false;
-	if (env_debug) {
-		has_debug = true;
-		R_FREE (env_debug);
-	}
-	char *homerc = r_str_home (".radare2rc");
-	if (homerc && r_file_is_regular (homerc)) {
-		if (has_debug) {
-			eprintf ("USER CONFIG loaded from %s\n", homerc);
-		}
-		r_core_cmd_file (r, homerc);
-	}
-	free (homerc);
-	homerc = r_str_home (R2_HOME_RC);
-	if (homerc && r_file_is_regular (homerc)) {
-		if (has_debug) {
-			eprintf ("USER CONFIG loaded from %s\n", homerc);
-		}
-		r_core_cmd_file (r, homerc);
-	}
-	free (homerc);
-	homerc = r_str_home (R2_HOME_RC_DIR);
-	if (homerc) {
-		if (r_file_is_directory (homerc)) {
-			char *file;
-			RListIter *iter;
-			RList *files = r_sys_dir (homerc);
-			r_list_foreach (files, iter, file) {
-				if (*file != '.') {
-					char *path = r_str_newf ("%s/%s", homerc, file);
-					if (r_file_is_regular (path)) {
-						if (has_debug) {
-							eprintf ("USER CONFIG loaded from %s\n", homerc);
-						}
-						r_core_cmd_file (r, path);
-					}
-					free (path);
-				}
-			}
-			r_list_free (files);
-		}
-		free (homerc);
-	}
-}
 
 static bool run_commands(RList *cmds, RList *files, bool quiet) {
 	RListIter *iter;
@@ -454,7 +416,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 	bool zerosep = false;
 	int help = 0;
 	enum { LOAD_BIN_ALL, LOAD_BIN_NOTHING, LOAD_BIN_STRUCTURES_ONLY } load_bin = LOAD_BIN_ALL;
-	int run_rc = 1;
+	bool run_rc = true;
  	int ret, c, perms = R_PERM_RX;
 	bool sandbox = false;
 	ut64 baddr = UT64_MAX;
@@ -517,7 +479,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 	r.r_main_rasm2 = r_main_rasm2;
 	r.r_main_rax2 = r_main_rax2;
 
-	r_core_task_sync_begin (&r);
+	r_core_task_sync_begin (&r.tasks);
 	if (argc == 2 && !strcmp (argv[1], "-p")) {
 		r_core_project_list (&r, 0);
 		r_cons_flush ();
@@ -640,6 +602,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 			break;
 		case 'm':
 			mapaddr = r_num_math (r.num, r_optarg);
+			s_seek = r_optarg;
 			r_config_set_i (r.config, "file.offset", mapaddr);
 			break;
 		case 'M':
@@ -655,7 +618,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 			r_config_set (r.config, "file.info", "false");
 			break;
 		case 'N':
-			run_rc = 0;
+			run_rc = false;
 			break;
 		case 'p':
 			if (!strcmp (r_optarg, "?")) {
@@ -791,6 +754,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 		r_io_plugin_list (r.io);
 		r_cons_flush ();
 		LISTS_FREE ();
+		free (pfile);
 		return 0;
 	}
 
@@ -889,7 +853,9 @@ R_API int r_main_radare2(int argc, char **argv) {
 	}
 
 	if (run_rc) {
-		radare2_rc (&r);
+		r_core_parse_radare2rc (&r);
+	} else {
+		r_config_set (r.config, "scr.utf8", "false");
 	}
 
 	if (r_config_get_i (r.config, "zign.autoload")) {
@@ -931,6 +897,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 		/* stdin/batch mode */
 		ut8 *buf = (ut8 *)r_stdin_slurp (&sz);
 		eprintf ("^D\n");
+		r_cons_set_raw (false);
 #if __UNIX__
 		// TODO: keep flags :?
 		(void)freopen ("/dev/tty", "rb", stdin);
@@ -1066,15 +1033,9 @@ R_API int r_main_radare2(int argc, char **argv) {
 				f = r_acp_to_utf8 (f);
 #	endif // __WINDOWS__
 				if (f) {
-#		if __WINDOWS__
-					pfile = r_str_append (pfile, "\"");
-					pfile = r_str_append (pfile, f);
-					pfile = r_str_append (pfile, "\"");
-#		else
 					char *escaped_path = r_str_arg_escape (f);
 					pfile = r_str_append (pfile, escaped_path);
 					free (escaped_path);
-#		endif
 					file = pfile; // r_str_append (file, escaped_path);
 				}
 #endif
@@ -1148,6 +1109,12 @@ R_API int r_main_radare2(int argc, char **argv) {
 								/* Load rbin info from r2 dbg:// or r2 /bin/ls */
 								/* the baddr should be set manually here */
 								(void)r_core_bin_load (&r, filepath, baddr);
+								// check if bin info is loaded and complain if -B was used
+								RBinFile *bi = r_bin_cur (r.bin);
+								bool haveBinInfo = bi && bi->o && bi->o->info && bi->o->info->type;
+								if (!haveBinInfo && baddr != UT64_MAX) {
+									eprintf ("Warning: Don't use -B on unknown files. Consider using -m.\n");
+								}
 							}
 						} else {
 							r_io_map_new (r.io, iod->fd, perms, 0LL, mapaddr, r_io_desc_size (iod));
@@ -1256,6 +1223,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 			const char *fstype = r.bin->cur->o->info->bclass;
 			r_core_cmdf (&r, "m /root %s @ 0", fstype);
 		}
+		r_core_cmd0 (&r, "=!"); // initalize io subsystem
 		iod = r.io ? r_io_desc_get (r.io, fh->fd) : NULL;
 #if USE_THREADS
 		if (iod && load_bin == LOAD_BIN_ALL && threaded) {
@@ -1267,6 +1235,8 @@ R_API int r_main_radare2(int argc, char **argv) {
 			lock = r_th_lock_new (false);
 			rabin_th = r_th_new (&rabin_delegate, lock, 0);
 			if (rabin_th) {
+				int cpuaff = (int)r_config_get_i (r.config, "cfg.cpuaffinity");
+				r_th_setaffinity (rabin_th, cpuaff);
 				r_th_setname (rabin_th, "rabin_th");
 			}
 			// rabin_delegate (NULL);
@@ -1301,12 +1271,12 @@ R_API int r_main_radare2(int argc, char **argv) {
 		if (debug) {
 			r_core_setup_debugger (&r, debugbackend, baddr == UT64_MAX);
 		}
-		if (!debug) {
+		RBinObject *o = r_bin_cur_object (r.bin);
+		if (!debug && o && !o->regstate) {
 			RFlagItem *fi = r_flag_get (r.flags, "entry0");
 			if (fi) {
 				r_core_seek (&r, fi->offset, 1);
 			} else {
-				RBinObject *o = r_bin_cur_object (r.bin);
 				if (o) {
 					RList *sections = r_bin_get_sections (r.bin);
 					RListIter *iter;
@@ -1450,7 +1420,7 @@ R_API int r_main_radare2(int argc, char **argv) {
 	if (patchfile) {
 		char *data = r_file_slurp (patchfile, NULL);
 		if (data) {
-			r_core_patch (&r, data);
+			ret = r_core_patch (&r, data);
 			r_core_seek (&r, 0, 1);
 			free (data);
 		} else {
@@ -1512,10 +1482,10 @@ R_API int r_main_radare2(int argc, char **argv) {
 				bool y_kill_debug = (ret & 4) >> 2;
 				bool y_save_project = (ret & 8) >> 3;
 
-				if (r_core_task_running_tasks_count (&r) > 0) {
+				if (r_core_task_running_tasks_count (&r.tasks) > 0) {
 					if (r_cons_yesno ('y', "There are running background tasks. Do you want to kill them? (Y/n)")) {
-						r_core_task_break_all (&r);
-						r_core_task_join (&r, r.main_task, -1);
+						r_core_task_break_all (&r.tasks);
+						r_core_task_join (&r.tasks, r.tasks.main_task, -1);
 					} else {
 						continue;
 					}
@@ -1582,7 +1552,7 @@ beach:
 		return ret;
 	}
 
-	r_core_task_sync_end (&r);
+	r_core_task_sync_end (&r.tasks);
 
 	// not really needed, cause r_core_fini will close the file
 	// and this fh may be come stale during the command
@@ -1591,7 +1561,6 @@ beach:
 	r_core_fini (&r);
 	r_cons_set_raw (0);
 	free (file);
-	r_str_const_free (NULL);
 	r_cons_free ();
 	LISTS_FREE ();
 	return ret;

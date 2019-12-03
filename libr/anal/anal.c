@@ -61,25 +61,7 @@ static void zign_rename_for(REvent *ev, int type, void *user, void *data) {
 		se->data.rename.oldname, se->data.rename.newname);
 }
 
-//not used
-#if 0
-static void __anal_hint_tree_calc_max_addr(RBNode *node) {
-	int i;
-	RAnalRange *range = container_of (node, RAnalRange, rb);
-	range->rb_max_addr = range->from;
-	for (i = 0; i < 2; i++) {
-		if (node->child[i]) {
-			RAnalRange *range1 = container_of (node->child[i],
-							   RAnalRange, rb);
-			if (range1->rb_max_addr > range->rb_max_addr) {
-				range->rb_max_addr = range1->rb_max_addr;
-			}
-		}
-	}
-}
-#endif
-
-static int __anal_hint_range_tree_cmp(const void *a_, const RBNode *b_) {
+static int __anal_hint_range_tree_cmp(const void *a_, const RBNode *b_, void *user) {
 	const RAnalRange *a = a_;
 	const RAnalRange *b = container_of (b_, const RAnalRange, rb);
 	if (a && b) {
@@ -105,22 +87,10 @@ static RAnalRange *__anal_range_hint_tree_find_at(RBNode *node, ut64 addr) {
 	return NULL;
 }
 
-//not used
-#if 0
-static bool __anal_range_hint_tree_delete(RBNode **root, RAnalRange *data) {
-	if (data) {
-		return r_rbtree_aug_delete (root, data, __anal_hint_range_tree_cmp,
-					    __anal_hint_range_tree_free,
-					    __anal_hint_tree_calc_max_addr)? 1: 0;
-	}
-	return false;
-}
-#endif
-
 static void __anal_range_hint_tree_insert(RBNode **root, RAnalRange *range) {
 	r_rbtree_aug_insert (root, range, &(range->rb),
 			     __anal_hint_range_tree_cmp,
-			     NULL);
+			     NULL, NULL);
 }
 
 static void __anal_add_range_on_hints(RAnal *a, ut64 addr, int bits) {
@@ -150,6 +120,10 @@ R_API RAnal *r_anal_new(void) {
 	int i;
 	RAnal *anal = R_NEW0 (RAnal);
 	if (!anal) {
+		return NULL;
+	}
+	if (!r_str_constpool_init (&anal->constpool)) {
+		free (anal);
 		return NULL;
 	}
 	anal->os = strdup (R_SYS_OS);
@@ -199,6 +173,7 @@ R_API RAnal *r_anal_new(void) {
 	anal->fcn_tree = NULL;
 	anal->fcn_addr_tree = NULL;
 	anal->refs = r_anal_ref_list_new ();
+	anal->leaddrs = NULL;
 	r_anal_set_bits (anal, 32);
 	anal->plugins = r_list_newf ((RListFree) r_anal_plugin_free);
 	if (anal->plugins) {
@@ -206,6 +181,7 @@ R_API RAnal *r_anal_new(void) {
 			r_anal_add (anal, anal_static_plugins[i]);
 		}
 	}
+	anal->cmdtail = r_strbuf_new (NULL);
 	return anal;
 }
 
@@ -221,9 +197,10 @@ R_API RAnal *r_anal_free(RAnal *a) {
 		return NULL;
 	}
 	/* TODO: Free anals here */
-	R_FREE (a->cpu);
-	R_FREE (a->os);
-	R_FREE (a->zign_path);
+	set_u_free (a->visited);
+	free (a->cpu);
+	free (a->os);
+	free (a->zign_path);
 	r_list_free (a->plugins);
 	a->fcns->free = r_anal_fcn_free;
 	r_list_free (a->fcns);
@@ -237,6 +214,7 @@ R_API RAnal *r_anal_free(RAnal *a) {
 	r_rbtree_free (a->rb_hints_ranges, __anal_hint_range_tree_free);
 	ht_up_free (a->dict_refs);
 	ht_up_free (a->dict_xrefs);
+	r_list_free (a->leaddrs);
 	a->sdb = NULL;
 	sdb_ns_free (a->sdb);
 	if (a->esil) {
@@ -244,6 +222,8 @@ R_API RAnal *r_anal_free(RAnal *a) {
 		a->esil = NULL;
 	}
 	free (a->last_disasm_reg);
+	r_strbuf_free (a->cmdtail);
+	r_str_constpool_fini (&a->constpool);
 	free (a);
 	return NULL;
 }
@@ -429,6 +409,7 @@ R_API ut8 *r_anal_mask(RAnal *anal, int size, const ut8 *data, ut64 at) {
 			memset (ret + idx + op->nopcode, 0, oplen - op->nopcode);
 		}
 		idx += oplen;
+		at += oplen;
 	}
 
 	r_anal_op_free (op);
@@ -481,7 +462,7 @@ R_API RAnalOp *r_anal_op_hexstr(RAnal *anal, ut64 addr, const char *str) {
 	return op;
 }
 
-R_API bool r_anal_op_is_eob (RAnalOp *op) {
+R_API bool r_anal_op_is_eob(RAnalOp *op) {
 	if (op->eob) {
 		return true;
 	}
@@ -805,6 +786,7 @@ R_API void r_anal_merge_hint_ranges(RAnal *a) {
 			}
 			range_bits = bits;
 		}
+		ls_free (sdb_range);
 		a->merge_hints = false;
 	}
 }
@@ -815,4 +797,28 @@ R_API void r_anal_bind(RAnal *anal, RAnalBind *b) {
 		b->get_fcn_in = r_anal_get_fcn_in;
 		b->get_hint = r_anal_hint_get;
 	}
+}
+
+R_API RList *r_anal_preludes(RAnal *anal) {
+	if (anal->cur && anal->cur->preludes ) {
+		return anal->cur->preludes (anal);
+	}
+	return NULL;
+}
+
+R_API bool r_anal_is_prelude(RAnal *anal, const ut8 *data, int len) {
+	RList *l = r_anal_preludes (anal);
+	if (l) {
+		RSearchKeyword *kw;
+		RListIter *iter;
+		r_list_foreach (l, iter, kw) {
+			int ks = kw->keyword_length;
+			if (len >= ks && !memcmp (data, kw->bin_keyword, ks)) {
+				r_list_free (l);
+				return true;
+			}
+		}
+		r_list_free (l);
+	}
+	return false;
 }

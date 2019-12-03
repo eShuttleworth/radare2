@@ -266,7 +266,7 @@ R_API void r_config_list(RConfig *cfg, const char *str, int rad) {
 }
 
 R_API RConfigNode* r_config_node_get(RConfig *cfg, const char *name) {
-	r_return_val_if_fail (cfg && name && *name, NULL);
+	r_return_val_if_fail (cfg && name, NULL);
 	return ht_pp_find (cfg->ht, name, NULL);
 }
 
@@ -300,7 +300,6 @@ R_API const char* r_config_get(RConfig *cfg, const char *name) {
 		if (node->getter) {
 			node->getter (cfg->user, node);
 		}
-		cfg->last_notfound = 0;
 		if (node->flags & CN_BOOL) {
 			return r_str_bool (r_str_is_true (node->value));
 		}
@@ -308,7 +307,6 @@ R_API const char* r_config_get(RConfig *cfg, const char *name) {
 	} else {
 		eprintf ("r_config_get: variable '%s' not found\n", name);
 	}
-	cfg->last_notfound = 1;
 	return NULL;
 }
 
@@ -445,7 +443,6 @@ R_API RConfigNode* r_config_set(RConfig *cfg, const char *name, const char *valu
 				}
 				ht_pp_insert (cfg->ht, node->name, node);
 				r_list_append (cfg->nodes, node);
-				cfg->n_nodes++;
 			} else {
 				eprintf ("r_config_set: unable to create a new RConfigNode\n");
 			}
@@ -492,7 +489,6 @@ R_API bool r_config_rm(RConfig *cfg, const char *name) {
 	if (node) {
 		ht_pp_delete (cfg->ht, node->name);
 		r_list_delete_data (cfg->nodes, node);
-		cfg->n_nodes--;
 		return true;
 	}
 	return false;
@@ -519,14 +515,7 @@ R_API RConfigNode* r_config_set_i(RConfig *cfg, const char *name, const ut64 i) 
 			node = NULL;
 			goto beach;
 		}
-		if (node->value) {
-			ov = strdup (node->value);
-			if (!ov) {
-				node = NULL;
-				goto beach;
-			}
-			free (node->value);
-		}
+		ov = node->value;
 		r_config_node_value_format_i (buf, sizeof (buf), i, NULL);
 		node->value = strdup (buf);
 		if (!node->value) {
@@ -548,7 +537,6 @@ R_API RConfigNode* r_config_set_i(RConfig *cfg, const char *name, const ut64 i) 
 			ht_pp_insert (cfg->ht, node->name, node);
 			if (cfg->nodes) {
 				r_list_append (cfg->nodes, node);
-				cfg->n_nodes++;
 			}
 		} else {
 			eprintf ("(locked: no new keys can be created (%s))\n", name);
@@ -561,7 +549,8 @@ R_API RConfigNode* r_config_set_i(RConfig *cfg, const char *name, const ut64 i) 
 		if (!ret) {
 			node->i_value = oi;
 			free (node->value);
-			node->value = strdup (ov? ov: "");
+			node->value = ov? ov: strdup ("");
+			ov = NULL;
 		}
 	}
 beach:
@@ -589,7 +578,7 @@ static void __evalString(RConfig *cfg, char *name) {
 			if (v) {
 				cfg->cb_printf ("%s\n", v);
 			} else {
-				eprintf ("Invalid conifg key %s\n", name);
+				eprintf ("Invalid config key %s\n", name);
 			}
 		}
 	}
@@ -614,7 +603,7 @@ R_API bool r_config_eval(RConfig *cfg, const char *str, bool many) {
 	if (many) {
 		// space separated list of k=v k=v,..
 		// if you want to use spaces go for base64 or e.
-		RList *list = r_str_split_list (s, ",");
+		RList *list = r_str_split_list (s, ",", 0);
 		RListIter *iter;
 		char *name;
 		r_list_foreach (list, iter, name) {
@@ -624,6 +613,7 @@ R_API bool r_config_eval(RConfig *cfg, const char *str, bool many) {
 		return true;
 	}
 	__evalString (cfg, s);
+	free (s);
 	return true;
 }
 
@@ -658,7 +648,6 @@ R_API RConfig* r_config_new(void *user) {
 	}
 	cfg->user = user;
 	cfg->num = NULL;
-	cfg->n_nodes = 0;
 	cfg->lock = 0;
 	cfg->cb_printf = (void *) printf;
 	return cfg;
@@ -675,7 +664,6 @@ R_API RConfig* r_config_clone(RConfig *cfg) {
 		RConfigNode *nn = r_config_node_clone (node);
 		ht_pp_insert (c->ht, node->name, nn);
 		r_list_append (c->nodes, nn);
-		c->n_nodes++;
 	}
 	c->lock = cfg->lock;
 	c->cb_printf = cfg->cb_printf;

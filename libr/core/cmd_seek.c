@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake */
+/* radare - LGPL - Copyright 2009-2019 - pancake */
 
 #include "r_types.h"
 #include "r_config.h"
@@ -140,9 +140,7 @@ R_API int r_core_lines_currline(RCore *core) {  // make priv8 again
 }
 
 R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
-	int i, line_count;
-	int bsz = core->blocksize;
-	char *buf;
+	int i, bsz = core->blocksize;
 	ut64 off = start_addr;
 	ut64 baddr;
 	if (start_addr == UT64_MAX || end_addr == UT64_MAX) {
@@ -157,9 +155,9 @@ R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
 
 	baddr = r_config_get_i (core->config, "bin.baddr");
 
-	line_count = start_addr? 0: 1;
+	int line_count = start_addr? 0: 1;
 	core->print->lines_cache[0] = start_addr? 0: baddr;
-	buf = malloc (bsz);
+	char *buf = malloc (bsz);
 	if (!buf) {
 		return -1;
 	}
@@ -170,18 +168,22 @@ R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
 		}
 		r_io_read_at (core->io, off, (ut8 *) buf, bsz);
 		for (i = 0; i < bsz; i++) {
-			if (buf[i] == '\n') {
-				core->print->lines_cache[line_count] = start_addr? off + i + 1: off + i + 1 + baddr;
-				line_count++;
-				if (line_count % bsz == 0) {
-					ut64 *tmp = realloc (core->print->lines_cache,
-						(line_count + bsz) * sizeof (ut64));
-					if (tmp) {
-						core->print->lines_cache = tmp;
-					} else {
-						R_FREE (core->print->lines_cache);
-						goto beach;
-					}
+			if (buf[i] != '\n') {
+				continue;
+			}
+			if ((line_count + 1) >= bsz) {
+				break;
+			}
+			core->print->lines_cache[line_count] = start_addr? off + i + 1: off + i + 1 + baddr;
+			line_count++;
+			if (line_count % bsz == 0) {
+				ut64 *tmp = realloc (core->print->lines_cache,
+					(line_count + bsz) * sizeof (ut64));
+				if (tmp) {
+					core->print->lines_cache = tmp;
+				} else {
+					R_FREE (core->print->lines_cache);
+					goto beach;
 				}
 			}
 		}
@@ -546,18 +548,25 @@ static int cmd_seek(void *data, const char *input) {
 				}
 				r_list_free (list);
 			}
-			r_cons_printf ("[");
+			PJ *pj = pj_new ();
+			pj_a (pj);
 			for (i = 0; i < lsz; ++i) {
 				ut64 *addr = r_list_get_n (addrs, i);
 				const char *name = r_list_get_n (names, i);
-				// XXX(should the "name" field be optional? That might make
-				// a bit more sense.
-				r_cons_printf ("{\"offset\":%"PFMT64d",\"symbol\":\"%s\"}", *addr, name);
-				if (i != lsz - 1) {
-					r_cons_printf (",");
+				pj_o (pj);
+				pj_kn (pj, "offset", *addr);
+				if (name && *name) {
+					pj_ks (pj, "name", name);
 				}
+				if (core->io->undo.undos == i) {
+					pj_kb (pj, "current", true);
+				}
+				pj_end (pj);
 			}
-			r_cons_printf ("]\n");
+			pj_end (pj);
+			char *s = pj_drain (pj);
+			r_cons_printf ("%s\n", s);
+			free (s);
 			r_list_free (addrs);
 			r_list_free (names);
 		}

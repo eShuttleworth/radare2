@@ -308,7 +308,7 @@ INST_HANDLER (adc) {	// ADC Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$c,hf,:=,");
 	ESIL_A ("7,$c,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=", d);
 }
 
@@ -323,7 +323,7 @@ INST_HANDLER (add) {	// ADD Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$c,hf,:=,");
 	ESIL_A ("7,$c,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=,", d);
 }
 
@@ -336,7 +336,7 @@ INST_HANDLER (adiw) {	// ADIW Rd+1:Rd, K
 	op->val = k;
 	ESIL_A ("%d,r%d_r%d,+=,", k, d + 1, d);			// Rd+1_Rd + k
 								// FLAGS:
-	ESIL_A ("$o,vf,:=,");					// V
+	ESIL_A ("7,$o,vf,:=,");					// V
 	ESIL_A ("r%d_r%d,0x8000,&,!,!,nf,:=,", d + 1, d);	// N
 	ESIL_A ("$z,zf,:=,");					// Z
 	ESIL_A ("15,$c,cf,:=,");				// C
@@ -530,7 +530,7 @@ INST_HANDLER (cp) {	// CP Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("vf,nf,^,sf,:=");
 }
 
@@ -546,7 +546,7 @@ INST_HANDLER (cpc) {	// CPC Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("vf,nf,^,sf,:=");
 }
 
@@ -561,7 +561,7 @@ INST_HANDLER (cpi) { // CPI Rd, K
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("vf,nf,^,sf,:=");
 }
 
@@ -600,7 +600,7 @@ INST_HANDLER (dec) {	// DEC Rd
 	const ut32 d = ((buf[0] >> 4) & 0xf) | ((buf[1] & 0x1) << 4);
 	ESIL_A ("0x1,r%d,-=,", d);			// Rd--
 							// FLAGS:
-	ESIL_A ("$o,vf,:=,");				// V
+	ESIL_A ("7,$o,vf,:=,");				// V
 	ESIL_A ("r%d,0x80,&,!,!,nf,:=,", d);		// N
 	ESIL_A ("$z,zf,:=,");				// Z
 	ESIL_A ("vf,nf,^,sf,:=,");			// S
@@ -756,7 +756,7 @@ INST_HANDLER (inc) {	// INC Rd
 	const ut32 d = ((buf[0] >> 4) & 0xf) | ((buf[1] & 0x1) << 4);
 	ESIL_A ("1,r%d,+=,", d);			// Rd++
 							// FLAGS:
-	ESIL_A ("$o,vf,:=,");				// V
+	ESIL_A ("7,$o,vf,:=,");				// V
 	ESIL_A ("r%d,0x80,&,!,!,nf,:=,", d);		// N
 	ESIL_A ("$z,zf,:=,");				// Z
 	ESIL_A ("vf,nf,^,sf,:=,");			// S
@@ -1206,7 +1206,7 @@ INST_HANDLER (sbc) {	// SBC Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=,", d);
 	ESIL_A ("vf,nf,^,sf,:=");
 }
@@ -1223,7 +1223,7 @@ INST_HANDLER (sbci) {	// SBCI Rd, k
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=,", d);
 	ESIL_A ("vf,nf,^,sf,:=");
 }
@@ -1239,7 +1239,7 @@ INST_HANDLER (sub) {	// SUB Rd, Rr
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=,", d);
 	ESIL_A ("vf,nf,^,sf,:=");
 }
@@ -1256,7 +1256,7 @@ INST_HANDLER (subi) {	// SUBI Rd, k
 	ESIL_A ("$z,zf,:=,");
 	ESIL_A ("3,$b,hf,:=,");
 	ESIL_A ("8,$b,cf,:=,");
-	ESIL_A ("$o,vf,:=,");
+	ESIL_A ("7,$o,vf,:=,");
 	ESIL_A ("0x80,r%d,&,!,!,nf,:=,", d);
 	ESIL_A ("vf,nf,^,sf,:=");
 }
@@ -1286,12 +1286,12 @@ INST_HANDLER (sbi) {	// SBI A, b
 
 INST_HANDLER (sbix) {	// SBIC A, b
 			// SBIS A, b
-	if (len < 1) {
+	if (len < 2) {
 		return;
 	}
 	int a = (buf[0] >> 3) & 0x1f;
 	int b = buf[0] & 0x07;
-	RAnalOp next_op;
+	RAnalOp next_op = { 0 };
 	RStrBuf *io_port;
 
 	op->type2 = 0;
@@ -1307,6 +1307,7 @@ INST_HANDLER (sbix) {	// SBIC A, b
 			cpu);
 	r_strbuf_fini (&next_op.esil);
 	op->jump = op->addr + next_op.size + 2;
+	op->fail = op->addr + op->size;
 
 	// cycles
 	op->cycles = 1;	// XXX: This is a bug, because depends on eval state,
@@ -1555,8 +1556,8 @@ OPCODE_DESC opcodes[] = {
 	INST_DECL (jmp,    0xfe0e, 0x940c, 2,      4,   JMP    ), // JMP k
 	INST_DECL (bld,    0xfe08, 0xf800, 1,      2,   SWI    ), // BLD Rd, b
 	INST_DECL (bst,    0xfe08, 0xfa00, 1,      2,   SWI    ), // BST Rd, b
-	INST_DECL (sbix,   0xfe08, 0x9900, 2,      2,   CJMP   ), // SBIC A, b
-	INST_DECL (sbix,   0xfe08, 0x9900, 2,      2,   CJMP   ), // SBIS A, b
+	INST_DECL (sbix,   0xff00, 0x9900, 2,      2,   CJMP   ), // SBIC A, b
+	INST_DECL (sbix,   0xff00, 0x9b00, 2,      2,   CJMP   ), // SBIS A, b
 	INST_DECL (sbrx,   0xfe08, 0xfc00, 2,      2,   CJMP   ), // SBRC Rr, b
 	INST_DECL (sbrx,   0xfe08, 0xfe00, 2,      2,   CJMP   ), // SBRS Rr, b
 	INST_DECL (ldd,    0xfe07, 0x9001, 0,      2,   LOAD   ), // LD Rd, Y/Z+
@@ -1920,6 +1921,7 @@ static int set_reg_profile(RAnal *anal) {
 	const char *p =
 		"=PC	pcl\n"
 		"=SP	sp\n"
+		"=BP    y\n"
 // explained in http://www.nongnu.org/avr-libc/user-manual/FAQ.html
 // and http://www.avrfreaks.net/forum/function-calling-convention-gcc-generated-assembly-file
 		"=A0	r25\n"

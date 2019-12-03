@@ -8,9 +8,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
-#if __UNIX__
-#include <signal.h>
-#endif
 
 #define COUNT_LINES 1
 #define CTX(x) I.context->x
@@ -34,6 +31,8 @@ typedef struct {
 	RConsEvent event_interrupt;
 	void *event_interrupt_data;
 } RConsBreakStack;
+
+static void cons_grep_reset(RConsGrep *grep);
 
 static void break_stack_free(void *ptr) {
 	RConsBreakStack *b = (RConsBreakStack*)ptr;
@@ -97,6 +96,7 @@ static void cons_stack_load(RConsStack *data, bool free_current) {
 
 static void cons_context_init(RConsContext *context, R_NULLABLE RConsContext *parent) {
 	context->breaked = false;
+	context->cmd_depth = R_CONS_CMD_DEPTH + 1;
 	context->buffer = NULL;
 	context->buffer_sz = 0;
 	context->lastEnabled = true;
@@ -116,6 +116,8 @@ static void cons_context_init(RConsContext *context, R_NULLABLE RConsContext *pa
 		context->color_mode = COLOR_MODE_DISABLED;
 		r_cons_pal_init (context);
 	}
+
+	cons_grep_reset (&context->grep);
 }
 
 static void cons_context_deinit(RConsContext *context) {
@@ -288,7 +290,7 @@ R_API void r_cons_context_break_push(RConsContext *context, RConsBreak cb, void 
 	if (r_stack_is_empty (context->break_stack)) {
 #if __UNIX__
 		if (sig && r_cons_context_is_main ()) {
-			signal (SIGINT, __break_signal);
+			r_sys_signal (SIGINT, __break_signal);
 		}
 #endif
 		context->breaked = false;
@@ -317,7 +319,7 @@ R_API void r_cons_context_break_pop(RConsContext *context, bool sig) {
 		//there is not more elements in the stack
 #if __UNIX__
 		if (sig && r_cons_context_is_main ()) {
-			signal (SIGINT, SIG_IGN);
+			r_sys_signal (SIGINT, SIG_IGN);
 		}
 #endif
 		context->breaked = false;
@@ -365,6 +367,7 @@ R_API int r_cons_get_cur_line() {
 #if __UNIX__
 		char buf[8];
 		struct termios save,raw;
+		fflush(stdout);			// flush the Arrow keys escape keys which was messing up the output
 		(void) tcgetattr (0, &save);
 		cfmakeraw (&raw);
 		(void) tcsetattr (0, TCSANOW, &raw);
@@ -387,7 +390,7 @@ R_API void r_cons_break_timeout(int timeout) {
 		I.timeout = 0;
 	} else {
 		if (timeout) {
-			I.timeout = r_sys_now () + (timeout * 1000000);
+			I.timeout = r_sys_now () + ((ut64) timeout << 20);
 		} else {
 			I.timeout = 0;
 		}
@@ -398,7 +401,7 @@ R_API void r_cons_break_end() {
 	I.context->breaked = false;
 	I.timeout = 0;
 #if __UNIX__
-	signal (SIGINT, SIG_IGN);
+	r_sys_signal (SIGINT, SIG_IGN);
 #endif
 	if (!r_stack_is_empty (I.context->break_stack)) {
 		//free all the stack
@@ -465,6 +468,10 @@ R_API bool r_cons_get_click(int *x, int *y) {
 	return set;
 }
 
+R_API void r_cons_enable_highlight(const bool enable) {
+        I.enable_highlight = enable;
+}
+
 R_API bool r_cons_enable_mouse(const bool enable) {
 #if __UNIX__
 	const char *click = enable
@@ -505,6 +512,7 @@ R_API RCons *r_cons_new() {
 	}
 	I.rgbstr = r_cons_rgb_str_off;
 	I.line = r_line_new ();
+	I.enable_highlight = true;
 	I.highlight = NULL;
 	I.is_wine = -1;
 	I.fps = 0;
@@ -532,21 +540,6 @@ R_API RCons *r_cons_new() {
 	I.null = 0;
 #if __WINDOWS__
 	I.ansicon = r_cons_is_ansicon ();
-#if UNICODE
-	if (IsValidCodePage (CP_UTF8)) {
-		if (!SetConsoleOutputCP (CP_UTF8) || !SetConsoleCP (CP_UTF8)) {
-			r_sys_perror ("r_cons_new");
-		}
-	} else {
-		R_LOG_WARN ("UTF-8 Codepage not installed.\n");
-	}
-#else
-	UINT CP_IN = GetACP ();
-	UINT CP_OUT = IsValidCodePage (CP_UTF8) ? CP_UTF8 : CP_IN;
-	if (!SetConsoleOutputCP (CP_OUT) || !SetConsoleCP (CP_IN)) {
-		r_sys_perror ("r_cons_new");
-	}
-#endif
 #endif
 #if EMSCRIPTEN
 	/* do nothing here :? */
@@ -558,7 +551,7 @@ R_API RCons *r_cons_new() {
 	I.term_raw.c_cflag &= ~(CSIZE|PARENB);
 	I.term_raw.c_cflag |= CS8;
 	I.term_raw.c_cc[VMIN] = 1; // Solaris stuff hehe
-	signal (SIGWINCH, resize);
+	r_sys_signal (SIGWINCH, resize);
 #elif __WINDOWS__
 	h = GetStdHandle (STD_INPUT_HANDLE);
 	GetConsoleMode (h, &I.term_buf);
@@ -569,6 +562,8 @@ R_API RCons *r_cons_new() {
 #endif
 	I.pager = NULL; /* no pager by default */
 	I.mouse = 0;
+	I.onestream = false;
+	I.show_vals = false;
 	r_cons_reset ();
 	r_cons_rgb_init ();
 
@@ -706,14 +701,11 @@ R_API void r_cons_clear() {
 }
 
 static void cons_grep_reset(RConsGrep *grep) {
-	grep->strings[0][0] = '\0';
-	grep->nstrings = 0; // XXX
+	R_FREE (grep->str);
+	ZERO_FILL (*grep);
 	grep->line = -1;
 	grep->sort = -1;
 	grep->sort_invert = false;
-	R_FREE (grep->str);
-	ZERO_FILL (grep->tokens);
-	grep->tokens_used = 0;
 }
 
 R_API void r_cons_reset() {
@@ -790,29 +782,6 @@ R_API RConsContext *r_cons_context_new(R_NULLABLE RConsContext *parent) {
 	}
 	cons_context_init (context, parent);
 	return context;
-	/*
-	RStack *stack = r_stack_newf (6, cons_stack_free);
-	if (!stack) {
-		return NULL;
-	}
-
-	RConsStack *data = R_NEW0 (RConsStack);
-	if (!data) {
-		r_stack_free (stack);
-		return NULL;
-	}
-
-	data->grep = R_NEW0 (RConsGrep);
-	if (!data->grep) {
-		R_FREE (data);
-		r_stack_free (stack);
-		return NULL;
-	}
-	cons_grep_reset (data->grep);
-
-	r_stack_push (stack, data);
-
-	return stack;*/
 }
 
 R_API void r_cons_context_free(RConsContext *context) {
@@ -858,6 +827,26 @@ static bool lastMatters() {
 		&& (CTX (lastEnabled) && !I.filter && I.context->grep.nstrings < 1 && \
 		!I.context->grep.tokens_used && !I.context->grep.less && \
 		!I.context->grep.json && !I.is_html);
+}
+
+R_API void r_cons_echo(const char *msg) {
+	static RStrBuf *echodata = NULL; // TODO: move into RConsInstance? maybe nope
+	if (msg) {
+		if (echodata) {
+			r_strbuf_append (echodata, msg);
+			r_strbuf_append (echodata, "\n");
+		} else {
+			echodata = r_strbuf_new (msg);
+		}
+	} else {
+		if (echodata) {
+			char *data = r_strbuf_drain (echodata);
+			r_cons_strcat (data);
+			r_cons_newline ();
+			echodata = NULL;
+			free (data);
+		}
+	}
 }
 
 R_API void r_cons_flush(void) {
@@ -987,32 +976,39 @@ R_API void r_cons_visual_flush() {
 	}
 	r_cons_reset ();
 	if (I.fps) {
-		int fps = 0, w = r_cons_get_size (NULL);
-		static ut64 prev = 0LL; //r_sys_now ();
-		fps = 0;
-		if (prev) {
-			ut64 now = r_sys_now ();
-			st64 diff = (st64)(now - prev);
-			if (diff < 0) {
-				fps = 0;
-			} else {
-				fps = (diff < 1000000)? (1000000.0/diff): 0;
-			}
-			prev = now;
-		} else {
-			prev = r_sys_now ();
-		}
-#ifdef __WINDOWS__
-		if (I.ansicon) {
-#endif
-			eprintf ("\x1b[0;%dH[%d FPS] \n", w - 10, fps);
-#ifdef __WINDOWS__
-		} else {
-			r_cons_w32_gotoxy (2, w - 10, 0);
-			eprintf ("[%d FPS] \n", fps);
-		}
-#endif
+		r_cons_print_fps (0);
 	}
+}
+
+R_API void r_cons_print_fps (int col) {
+	int fps = 0, w = r_cons_get_size (NULL);
+	static ut64 prev = 0LL; //r_sys_now ();
+	fps = 0;
+	if (prev) {
+		ut64 now = r_sys_now ();
+		st64 diff = (st64)(now - prev);
+		if (diff < 0) {
+			fps = 0;
+		} else {
+			fps = (diff < 1000000)? (1000000.0/diff): 0;
+		}
+		prev = now;
+	} else {
+		prev = r_sys_now ();
+	}
+	if (col < 1) {
+		col = 12;
+	}
+#ifdef __WINDOWS__
+	if (I.ansicon) {
+		eprintf ("\x1b[0;%dH[%d FPS] \n", w - col, fps);
+	} else {
+		r_cons_w32_gotoxy (2, w - col, 0);
+		eprintf (" [%d FPS] \n", fps);
+	}
+#else
+	eprintf ("\x1b[0;%dH[%d FPS] \n", w - col, fps);
+#endif
 }
 
 static int real_strlen(const char *ptr, int len) {
@@ -1142,6 +1138,24 @@ R_API int r_cons_printf(const char *format, ...) {
 
 	return 0;
 }
+
+#if ONE_STREAM_HACK
+R_API int r_cons_onestream_printf(const char *format, ...) {
+	va_list ap;
+	if (!format || !*format) {
+		return -1;
+	}
+	va_start (ap, format);
+	if (I.onestream) {
+		r_cons_printf_list (format, ap);
+	} else {
+		vfprintf (stderr, format, ap);
+	}
+	va_end (ap);
+
+	return 0;
+}
+#endif
 
 R_API int r_cons_get_column() {
 	char *line = strrchr (I.context->buffer, '\n');
@@ -1362,22 +1376,27 @@ R_API int r_cons_get_size(int *rows) {
 }
 
 #if __WINDOWS__
-R_API os_info *r_sys_get_osinfo();
 R_API bool r_cons_is_ansicon(void) {
 	DWORD major;
 	DWORD minor;
+	DWORD release = 0;
 	bool win_support = false;
-	os_info *info = r_sys_get_osinfo ();
-	if (info) {
-		major = info->major;
-		minor = info->minor;
+	RSysInfo *info = r_sys_info ();
+	if (info && info->version) {
+		char *dot = strtok (info->version, ".");
+		major = atoi (dot);
+		dot = strtok (NULL, ".");
+		minor = atoi (dot);
+		if (info->release) {
+			release = atoi (info->release);
+		}
 		if (major > 10
 			|| major == 10 && minor > 0
-			|| major == 10 && minor == 0 && info->compilation >= 1703) {
+			|| major == 10 && minor == 0 && release >= 1703) {
 			win_support = true;
 		}
 	}
-	free (info);
+	r_sys_info_free (info);
 	char *ansicon = r_sys_getenv ("ANSICON");
 	if (ansicon) {
 		free (ansicon);
@@ -1451,6 +1470,34 @@ R_API void r_cons_set_raw(bool is_raw) {
 #endif
 	fflush (stdout);
 	oldraw = is_raw;
+}
+
+R_API void r_cons_set_utf8(bool b) {
+	I.use_utf8 = b;
+#if __WINDOWS__
+	if (b) {
+		if (IsValidCodePage (CP_UTF8)) {
+			if (!SetConsoleOutputCP (CP_UTF8)) {
+				r_sys_perror ("r_cons_set_utf8");
+			}
+#if UNICODE
+			UINT inCP = CP_UTF8;
+#else
+			UINT inCP = GetACP ();
+#endif
+			if (!SetConsoleCP (inCP)) {
+				r_sys_perror ("r_cons_set_utf8");
+			}
+		} else {
+			R_LOG_WARN ("UTF-8 Codepage not installed.\n");
+		}
+	} else {
+		UINT acp = GetACP ();
+		if (!SetConsoleCP (acp) || !SetConsoleOutputCP (acp)) {
+			r_sys_perror ("r_cons_set_utf8");
+		}
+	}
+#endif
 }
 
 R_API void r_cons_invert(int set, int color) {
@@ -1538,11 +1585,16 @@ R_API void r_cons_highlight(const char *word) {
 		strlen (inv[1])
 	};
 
+	if (!I.enable_highlight) {
+		r_cons_enable_highlight (true);
+		return;
+	}
 	if (word && *word && I.context->buffer) {
 		int word_len = strlen (word);
 		char *orig;
 		clean = r_str_ndup (I.context->buffer, I.context->buffer_len);
 		l = r_str_ansi_filter (clean, &orig, &cpos, -1);
+		free (I.context->buffer);
 		I.context->buffer = orig;
 		if (I.highlight) {
 			if (strcmp (word, I.highlight)) {
@@ -1562,7 +1614,7 @@ R_API void r_cons_highlight(const char *word) {
 		strcpy (rword + linv[0], word);
 		strcpy (rword + linv[0] + word_len, inv[1]);
 		res = r_str_replace_thunked (I.context->buffer, clean, cpos,
-					     l, word, rword, 1);
+					l, word, rword, 1);
 		if (res) {
 			I.context->buffer = res;
 			I.context->buffer_len = I.context->buffer_sz = strlen (res);
@@ -1680,6 +1732,8 @@ R_API void r_cons_bind(RConsBind *bind) {
 	}
 	bind->get_size = r_cons_get_size;
 	bind->get_cursor = r_cons_get_cursor;
+	bind->cb_printf = r_cons_printf;
+	bind->is_breaked = r_cons_is_breaked;
 }
 
 R_API const char* r_cons_get_rune(const ut8 ch) {

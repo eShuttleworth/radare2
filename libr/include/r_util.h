@@ -47,6 +47,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/r_mem.h"
 #include "r_util/r_name.h"
 #include "r_util/r_num.h"
+#include "r_util/r_table.h"
 #include "r_util/r_graph.h"
 #include "r_util/r_panels.h"
 #include "r_util/r_pool.h"
@@ -61,6 +62,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/r_ascii_table.h"
 #include "r_util/r_strbuf.h"
 #include "r_util/r_strpool.h"
+#include "r_util/r_str_constpool.h"
 #include "r_util/r_sys.h"
 #include "r_util/r_tree.h"
 #include "r_util/r_uleb128.h"
@@ -72,6 +74,7 @@ int gettimeofday (struct timeval* p, void* tz);
 #include "r_util/pj.h"
 #include "r_util/r_x509.h"
 #include "r_util/r_pkcs7.h"
+#include "r_util/r_protobuf.h"
 // requires io, core, ... #include "r_util/r_print.h"
 
 #ifdef __cplusplus

@@ -103,7 +103,7 @@ endif
 platform_deps = []
 platform_inc = ['.', 'libr/include']
 if host_machine.system() == 'windows'
-  platform_deps = [cc.find_library('ws2_32')]
+  platform_deps = [cc.find_library('ws2_32'), cc.find_library('psapi')]
 endif
 platform_inc = include_directories(platform_inc)
 
@@ -113,8 +113,15 @@ if get_option('static_runtime')
   endif
 endif
 
+if cc.get_id() == 'clang-cl'
+  add_project_arguments('-D__STDC__=1', language: 'c')
+  add_project_arguments('-D_CRT_DECLARE_NONSTDC_NAMES ', language: 'c')
+  add_project_arguments('-D_CRT_SECURE_NO_WARNINGS', language: 'c')
+  add_project_arguments('-D_CRT_NONSTDC_NO_DEPRECATE', language: 'c')
+endif
+
 if get_option('default_library') == 'shared'
-  if host_machine.system() != 'windows' or cc.get_id() != 'msvc'
+  if host_machine.system() != 'windows' or cc.get_id()!='msvc' and cc.get_id()!='clang-cl'
     add_project_arguments('-fvisibility=hidden', language: 'c')
   endif
 endif
@@ -299,8 +306,17 @@ userconf.set10('HAVE_LIB_XXHASH', sys_xxhash.found())
 userconf.set10('USE_LIB_XXHASH', use_sys_xxhash)
 userconf.set10('DEBUGGER', has_debugger)
 userconf.set('PREFIX', r2_prefix)
-userconf.set('LIBDIR', join_paths(r2_prefix, r2_libdir))
-userconf.set('INCLUDEDIR', join_paths(r2_prefix, r2_incdir))
+if host_machine.system() == 'windows'
+  userconf.set('LIBDIR', r2_libdir)
+  userconf.set('INCLUDEDIR', r2_incdir)
+  userconf.set('DATADIR_R2', r2_datdir)
+  userconf.set10('HAVE_JEMALLOC', false)
+else
+  userconf.set('LIBDIR', join_paths(r2_prefix, r2_libdir))
+  userconf.set('INCLUDEDIR', join_paths(r2_prefix, r2_incdir))
+  userconf.set('DATADIR_R2', r2_datdir_r2)
+  userconf.set10('HAVE_JEMALLOC', true)
+endif
 userconf.set('DATADIR', join_paths(r2_prefix, r2_datdir))
 userconf.set('WWWROOT', join_paths(r2_prefix, r2_wwwroot))
 userconf.set('SDB', r2_sdb)
@@ -318,13 +334,6 @@ userconf.set10('HAVE_FORK', true)
 userconf.set10('HAVE_PTRACE', have_ptrace)
 userconf.set10('USE_PTRACE_WRAP', use_ptrace_wrap)
 userconf.set10('WITH_GPL', true)
-if host_machine.system() == 'windows'
-  userconf.set('DATADIR_R2', r2_datdir)
-  userconf.set10('HAVE_JEMALLOC', false)
-else
-  userconf.set('DATADIR_R2', r2_datdir_r2)
-  userconf.set10('HAVE_JEMALLOC', true)
-endif
 ok = cc.has_header_symbol('sys/personality.h', 'ADDR_NO_RANDOMIZE')
 userconf.set10('HAVE_DECL_ADDR_NO_RANDOMIZE', ok)
 
@@ -332,7 +341,8 @@ foreach item : [
     ['arc4random_uniform', '#include <stdlib.h>'],
     ['explicit_bzero', '#include <string.h>'],
     ['explicit_memset', '#include <string.h>'],
-    ['clock_nanosleep', '#include <time.h>']
+    ['clock_nanosleep', '#include <time.h>'],
+    ['sigaction', '#include <signal.h>']
   ]
   func = item[0]
   ok = cc.has_function(func, prefix: item[1])
@@ -380,10 +390,11 @@ subdir('libr/util')
 subdir('libr/hash')
 subdir('libr/crypto')
 subdir('libr/socket')
+subdir('libr/cons')
+subdir('shlr/gdb')
 subdir('libr/io')
 subdir('libr/bp')
 subdir('libr/syscall')
-subdir('libr/cons')
 subdir('libr/search')
 subdir('libr/magic')
 subdir('libr/flag')
@@ -409,6 +420,7 @@ subdir('libr/flag/d')
 subdir('libr/main')
 
 if not meson.is_subproject()
+  rpath = get_option('local') and get_option('default_library') == 'shared' ? '$ORIGIN/../' + get_option('libdir') : ''
   subdir('binr/rahash2')
   subdir('binr/rarun2')
   subdir('binr/rasm2')

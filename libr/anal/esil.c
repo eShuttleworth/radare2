@@ -17,14 +17,6 @@ if (esil) {\
 	} \
 }
 
-/* internal helper functions */
-static void err(RAnalEsil *esil, const char *msg) {
-	if (esil->verbose) {
-		eprintf ("0x%08" PFMT64x " %s\n", esil->address, msg);
-	}
-}
-#define ERR(x) err(esil,x)
-
 /* Returns the number that has bits + 1 least significant bits set. */
 static inline ut64 genmask(int bits) {
 	ut64 m = UT64_MAX;
@@ -36,6 +28,8 @@ static inline ut64 genmask(int bits) {
 	}
 	return m;
 }
+
+#define ERR(x) if (esil->verbose) { eprintf ("%s\n", x); }
 
 static bool isnum(RAnalEsil *esil, const char *str, ut64 *num) {
 	if (!esil || !str) {
@@ -411,8 +405,19 @@ static int internal_esil_reg_write_no_null (RAnalEsil *esil, const char *regname
 	const char *pc = r_reg_get_name (esil->anal->reg, R_REG_NAME_PC);
 	const char *sp = r_reg_get_name (esil->anal->reg, R_REG_NAME_SP);
 	const char *bp = r_reg_get_name (esil->anal->reg, R_REG_NAME_BP);
-	//trick to protect strcmp from segfaulting with out making the condition complex
-	r_return_val_if_fail (pc && sp && bp, -1);
+
+	if (!pc) {
+		eprintf ("Warning: RReg profile does not contain PC register\n");
+		return false;
+	}
+	if (!sp) {
+		eprintf ("Warning: RReg profile does not contain SP register\n");
+		return false;
+	}
+	if (!bp) {
+		eprintf ("Warning: RReg profile does not contain BP register\n");
+		return false;
+	}
 	if (reg && reg->name && ((strcmp (reg->name , pc) && strcmp (reg->name, sp) && strcmp(reg->name, bp)) || num)) { //I trust k-maps
 		r_reg_set_value (esil->anal->reg, reg, num);
 		return true;
@@ -488,7 +493,9 @@ R_API int r_anal_esil_get_parm_size(RAnalEsil *esil, const char *str, ut64 *num,
 		}
 		return true;
 	default:
-		IFDBG eprintf ("Invalid arg (%s)\n", str);
+		if (esil->verbose) {
+			eprintf ("Invalid arg (%s)\n", str);
+		}
 		esil->parse_stop = 1;
 		break;
 	}
@@ -546,6 +553,7 @@ static bool esil_zf(RAnalEsil *esil) {
 	return r_anal_esil_pushnum (esil, !(esil->cur & genmask (esil->lastsz - 1)));
 }
 
+// checks if there was a carry from bit x (x,$c)
 static bool esil_cf(RAnalEsil *esil) {
 	char *src = r_anal_esil_pop (esil);
 
@@ -571,6 +579,7 @@ static bool esil_cf(RAnalEsil *esil) {
 	return r_anal_esil_pushnum (esil, (esil->cur & mask) < (esil->old & mask));
 }
 
+// checks if there was a borrow from bit x (x,$b)
 static bool esil_bf(RAnalEsil *esil) {
 	char *src = r_anal_esil_pop (esil);
 
@@ -605,42 +614,62 @@ static bool esil_pf(RAnalEsil *esil) {
 	return r_anal_esil_pushnum (esil, !((((lsb * c1) & c2) % c3) & 1));
 }
 
+// like carry
+// checks overflow from bit x (x,$o)
+//	x,$o ===> x,$c,x-1,$c,^
 static bool esil_of(RAnalEsil *esil) {
-	if (!esil || esil->lastsz < 2) {
+	char *p_bit = r_anal_esil_pop (esil);
+
+	if (!p_bit) {
 		return false;
 	}
-	const ut64 m[2] = {genmask (esil->lastsz - 1), genmask (esil->lastsz - 2)};
+
+	if (r_anal_esil_get_parm_type (esil, p_bit) != R_ANAL_ESIL_PARM_NUM) {
+		free (p_bit);
+		return false;
+	}
+	ut64 bit;
+	r_anal_esil_get_parm (esil, p_bit, &bit);
+	free (p_bit);
+
+	const ut64 m[2] = {genmask (bit & 0x3f), genmask ((bit + 0x3f) & 0x3f)};
 	const ut64 result = ((esil->cur & m[0]) < (esil->old & m[0])) ^ ((esil->cur & m[1]) < (esil->old & m[1]));
 	ut64 res = r_anal_esil_pushnum (esil, result);
 	return res;
 }
 
+//checks sign bit at x (x,$s)
 static bool esil_sf(RAnalEsil *esil) {
-	if (!esil || !esil->lastsz) {
+	char *p_size = r_anal_esil_pop (esil);
+
+	if (!p_size) {
 		return false;
 	}
-	ut64 res = r_anal_esil_pushnum (esil, (esil->cur >> (esil->lastsz - 1)) & 1);
+
+	if (r_anal_esil_get_parm_type (esil, p_size) != R_ANAL_ESIL_PARM_NUM) {
+		free (p_size);
+		return false;
+	}
+	ut64 size;
+	r_anal_esil_get_parm (esil, p_size, &size);
+	free (p_size);
+
+	ut64 res = r_anal_esil_pushnum (esil, (esil->cur >> size) & 1);
 	return res;
 }
 
 static bool esil_ds(RAnalEsil *esil) {
-	if (!esil) {
-		return false;
-	}
+	r_return_val_if_fail (esil, false);
 	return r_anal_esil_pushnum (esil, esil->delay);
 }
 
 static bool esil_jt(RAnalEsil *esil) {
-	if (!esil) {
-		return false;
-	}
+	r_return_val_if_fail (esil, false);
 	return r_anal_esil_pushnum (esil, esil->jump_target);
 }
 
 static bool esil_js(RAnalEsil *esil) {
-	if (!esil) {
-		return false;
-	}
+	r_return_val_if_fail (esil, false);
 	return r_anal_esil_pushnum (esil, esil->jump_target_set);
 }
 
@@ -648,24 +677,23 @@ static bool esil_js(RAnalEsil *esil) {
 //can we please deprecate this, it's neither accurate, nor needed
 //plugins should know regsize, and since this is a const even users should know this: ?´e anal.bits´/8
 //	- condret
+// YES PLS KILL IT
 static bool esil_rs(RAnalEsil *esil) {
-	if (!esil || !esil->anal) {
-		return false;
-	}
+	r_return_val_if_fail (esil && esil->anal, false);
 	return r_anal_esil_pushnum (esil, esil->anal->bits >> 3);
 }
 
 //can we please deprecate this, plugins should know their current address
 //even if they don't know it, $$ should be equal to PC register at the begin of each expression
 //	- condret
+// YES PLS KILL IT
 static bool esil_address(RAnalEsil *esil) {
-	if (!esil) {
-		return 0;
-	}
+	r_return_val_if_fail (esil, false);
 	return r_anal_esil_pushnum (esil, esil->address);
 }
 
 static bool esil_weak_eq(RAnalEsil *esil) {
+	r_return_val_if_fail (esil && esil->anal, false);
 	char *dst = r_anal_esil_pop (esil);
 	char *src = r_anal_esil_pop (esil);
 
@@ -682,7 +710,7 @@ static bool esil_weak_eq(RAnalEsil *esil) {
 		free (dst);
 		return true;
 	}
-	
+
 	free (src);
 	free (dst);
 	return false;
@@ -1108,7 +1136,9 @@ static bool esil_lsreq(RAnalEsil *esil) {
 	if (dst && r_anal_esil_reg_read (esil, dst, &num, NULL)) {
 		if (src && r_anal_esil_get_parm (esil, src, &num2)) {
 			if (num2 > 63) {
-				eprintf ("Invalid shift at 0x%08"PFMT64x"\n", esil->address);
+				if (esil->verbose) {
+					eprintf ("Invalid shift at 0x%08"PFMT64x"\n", esil->address);
+				}
 				num2 = 63;
 			}
 			esil->old = num;
@@ -1192,7 +1222,9 @@ static bool esil_asreq(RAnalEsil *esil) {
 			// r_anal_esil_pushnum (esil, res);
 			ret = true;
 		} else {
-			ERR ("esil_asr: empty stack");
+			if (esil->verbose) {
+				eprintf ("esil_asr: empty stack");
+			}
 		}
 	}
 	free (param);
@@ -1812,7 +1844,7 @@ static bool esil_poke_some(RAnalEsil *esil) {
 	int i, regsize;
 	ut64 ptr, regs = 0, tmp;
 	char *count, *dst = r_anal_esil_pop (esil);
-#define BYTES_SIZE 64
+
 	if (dst && r_anal_esil_get_parm_size (esil, dst, &tmp, &regsize)) {
 		// reg
 		isregornum (esil, dst, &ptr);
@@ -1820,7 +1852,7 @@ static bool esil_poke_some(RAnalEsil *esil) {
 		if (count) {
 			isregornum (esil, count, &regs);
 			if (regs > 0) {
-				ut8 b[BYTES_SIZE];
+				ut8 b[8] = {0};
 				ut64 num64;
 				for (i = 0; i < regs; i++) {
 					char *foo = r_anal_esil_pop (esil);
@@ -1830,16 +1862,16 @@ static bool esil_poke_some(RAnalEsil *esil) {
 						free (count);
 						return true;
 					}
+					r_anal_esil_get_parm_size (esil, foo, &tmp, &regsize);
 					isregornum (esil, foo, &num64);
-					/* TODO: implement peek here */
-					// read from $dst
 					r_write_ble (b, num64, esil->anal->big_endian, regsize);
-					const ut32 written = r_anal_esil_mem_write (esil, ptr, b, BYTES_SIZE);
-					if (written != BYTES_SIZE) {
+					const int size_bytes = regsize / 8;
+					const ut32 written = r_anal_esil_mem_write (esil, ptr, b, size_bytes);
+					if (written != size_bytes) {
 						//eprintf ("Cannot write at 0x%08" PFMT64x "\n", ptr);
 						esil->trap = 1;
 					}
-					ptr += BYTES_SIZE;
+					ptr += size_bytes;
 					free (foo);
 				}
 			}
@@ -3075,7 +3107,7 @@ R_API int r_anal_esil_condition(RAnalEsil *esil, const char *str) {
 		}
 		free (popped);
 	} else {
-		ERR ("ESIL stack is empty");
+		eprintf ("Warning: Cannot pop because The ESIL stack is empty");
 		return -1;
 	}
 	return ret;
@@ -3089,14 +3121,14 @@ static void r_anal_esil_setup_ops(RAnalEsil *esil) {
 #define	OT_REGW	R_ANAL_ESIL_OP_TYPE_REG_WRITE
 #define	OT_MEMW	R_ANAL_ESIL_OP_TYPE_MEM_WRITE
 #define	OT_MEMR	R_ANAL_ESIL_OP_TYPE_MEM_READ
-	
+
 	OP ("$", esil_interrupt, 0, 1, OT_UNK);		//hm, type seems a bit wrong
 	OP ("$z", esil_zf, 1, 0, OT_UNK);
 	OP ("$c", esil_cf, 1, 1, OT_UNK);
 	OP ("$b", esil_bf, 1, 1, OT_UNK);
 	OP ("$p", esil_pf, 1, 0, OT_UNK);
-	OP ("$s", esil_sf, 1, 0, OT_UNK);
-	OP ("$o", esil_of, 1, 0, OT_UNK);
+	OP ("$s", esil_sf, 1, 1, OT_UNK);
+	OP ("$o", esil_of, 1, 1, OT_UNK);
 	OP ("$ds", esil_ds, 1, 0, OT_UNK);
 	OP ("$jt", esil_jt, 1, 0, OT_UNK);
 	OP ("$js", esil_js, 1, 0, OT_UNK);

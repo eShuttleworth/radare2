@@ -36,6 +36,9 @@ static void print_string(RBinFile *bf, RBinString *string, int raw) {
 	int mode = bf->strmode;
 	ut64 addr, vaddr;
 	RBin *bin = bf->rbin;
+	if (!bin) {
+		return;
+	}
 	const char *section_name, *type_string;
 	RIO *io = bin->iob.io;
 	if (!io) {
@@ -64,10 +67,10 @@ static void print_string(RBinFile *bf, RBinString *string, int raw) {
 			}
 		}
 		break;
-	case R_MODE_SIMPLEST: 
+	case R_MODE_SIMPLEST:
 		io->cb_printf ("%s\n", string->string);
 		break;
-	case R_MODE_SIMPLE: 
+	case R_MODE_SIMPLE:
 		if (raw == 2) {
 			io->cb_printf ("0x%08"PFMT64x" %s\n", addr, string->string);
 		} else {
@@ -95,7 +98,7 @@ static void print_string(RBinFile *bf, RBinString *string, int raw) {
 		free (f_name);
 		break;
 		}
-	case R_MODE_PRINT: 
+	case R_MODE_PRINT:
 		io->cb_printf ("%03u 0x%08" PFMT64x " 0x%08" PFMT64x " %3u %3u "
 			       "(%s) %5s %s\n",
 			string->ordinal, string->paddr, vaddr,
@@ -107,6 +110,7 @@ static void print_string(RBinFile *bf, RBinString *string, int raw) {
 
 static int string_scan_range(RList *list, RBinFile *bf, int min,
 			      const ut64 from, const ut64 to, int type, int raw, RBinSection *section) {
+	RBin *bin = bf->rbin;
 	ut8 tmp[R_STRING_SCAN_BUFFER_SIZE];
 	ut64 str_start, needle = from;
 	int count = 0, i, rc, runes;
@@ -118,7 +122,10 @@ static int string_scan_range(RList *list, RBinFile *bf, int min,
 	if (type == -1) {
 		type = R_STRING_TYPE_DETECT;
 	}
-	if (from >= to) {
+	if (from == to) {
+		return 0;
+	}
+	if (from > to) {
 		eprintf ("Invalid range to find strings 0x%"PFMT64x" .. 0x%"PFMT64x"\n", from, to);
 		return -1;
 	}
@@ -134,6 +141,11 @@ static int string_scan_range(RList *list, RBinFile *bf, int min,
 	r_buf_read_at (bf->buf, from, buf, len);
 	// may oobread
 	while (needle < to) {
+		if (bin && bin->consb.is_breaked) {
+			if (bin->consb.is_breaked ()) {
+				break;
+			}
+		}
 		rc = r_utf8_decode (buf + needle - from, to - needle, NULL);
 		if (!rc) {
 			needle++;
@@ -357,11 +369,13 @@ static void get_strings_range(RBinFile *bf, RList *list, int min, int raw, ut64 
 	if (min < 0) {
 		return;
 	}
-	if (!to || to > r_buf_size (bf->buf)) {
-		to = r_buf_size (bf->buf);
-	}
-	if (!to) {
-		return;
+	if (!bf->rbin->is_debugger) {
+		if (!to || to > r_buf_size (bf->buf)) {
+			to = r_buf_size (bf->buf);
+		}
+		if (!to) {
+			return;
+		}
 	}
 	if (raw != 2) {
 		ut64 size = to - from;
@@ -462,10 +476,10 @@ static bool xtr_metadata_match(RBinXtrData *xtr_data, const char *arch, int bits
 	return bits == iter_bits && !strcmp (iter_arch, arch) && !xtr_data->loaded;
 }
 
-R_IPI RBinFile *r_bin_file_new_from_buffer(RBin *bin, const char *file, RBuffer *buf, ut64 file_sz, int rawstr, ut64 baseaddr, ut64 loadaddr, int fd, const char *pluginname, ut64 offset) {
-	r_return_val_if_fail (bin && file && buf && file_sz != UT64_MAX, NULL);
+R_IPI RBinFile *r_bin_file_new_from_buffer(RBin *bin, const char *file, RBuffer *buf, int rawstr, ut64 baseaddr, ut64 loadaddr, int fd, const char *pluginname) {
+	r_return_val_if_fail (bin && file && buf, NULL);
 
-	RBinFile *bf = r_bin_file_new (bin, file, file_sz, rawstr, fd, pluginname, NULL, false);
+	RBinFile *bf = r_bin_file_new (bin, file, r_buf_size (buf), rawstr, fd, pluginname, NULL, false);
 	if (bf) {
 		bf->buf = r_buf_ref (buf);
 		RBinPlugin *plugin = get_plugin_from_buffer (bin, pluginname, bf->buf);
@@ -477,7 +491,7 @@ R_IPI RBinFile *r_bin_file_new_from_buffer(RBin *bin, const char *file, RBuffer 
 		// size is set here because the reported size of the object depends on
 		// if loaded from xtr plugin or partially read
 		if (!o->size) {
-			o->size = file_sz;
+			o->size = r_buf_size (buf);
 		}
 		r_list_append (bin->binfiles, bf);
 	}
@@ -531,19 +545,20 @@ R_API ut64 r_bin_file_delete_all(RBin *bin) {
 	return 0;
 }
 
-R_API bool r_bin_file_delete(RBin *bin, ut32 bin_fd) {
+R_API bool r_bin_file_delete(RBin *bin, ut32 bin_id) {
+	r_return_val_if_fail (bin, false);
+
 	RListIter *iter;
-	RBinFile *bf = r_bin_cur (bin);
-	if (bin && bf) {
-		r_list_foreach (bin->binfiles, iter, bf) {
-			if (bf && bf->fd == bin_fd) {
-				if (bf->fd == bin_fd) {
-					//avoiding UaF due to dead reference
-					bin->cur = NULL;
-				}
-				r_list_delete (bin->binfiles, iter);
-				return true;
+	RBinFile *bf, *cur = r_bin_cur (bin);
+
+	r_list_foreach (bin->binfiles, iter, bf) {
+		if (bf && bf->id == bin_id) {
+			if (cur && cur->id == bin_id) {
+				// avoiding UaF due to dead reference
+				bin->cur = NULL;
 			}
+			r_list_delete (bin->binfiles, iter);
+			return true;
 		}
 	}
 	return false;
@@ -674,7 +689,7 @@ R_API void r_bin_file_free(void /*RBinFile*/ *_bf) {
 		bf->sdb_addrinfo = NULL;
 	}
 	free (bf->file);
-	bf->o = NULL;
+	r_bin_object_free (bf->o);
 	r_list_free (bf->xtr_data);
 	if (bf->id != -1) {
 		// TODO: use r_storage api
@@ -684,12 +699,12 @@ R_API void r_bin_file_free(void /*RBinFile*/ *_bf) {
 	free (bf);
 }
 
-R_IPI RBinFile *r_bin_file_xtr_load_buffer(RBin *bin, RBinXtrPlugin *xtr, const char *filename, RBuffer *buf, ut64 file_sz, ut64 baseaddr, ut64 loadaddr, int idx, int fd, int rawstr) {
+R_IPI RBinFile *r_bin_file_xtr_load_buffer(RBin *bin, RBinXtrPlugin *xtr, const char *filename, RBuffer *buf, ut64 baseaddr, ut64 loadaddr, int idx, int fd, int rawstr) {
 	r_return_val_if_fail (bin && xtr && buf, NULL);
 
 	RBinFile *bf = r_bin_file_find_by_name (bin, filename);
 	if (!bf) {
-		bf = r_bin_file_new (bin, filename, file_sz, rawstr, fd, xtr->name, bin->sdb, false);
+		bf = r_bin_file_new (bin, filename, r_buf_size (buf), rawstr, fd, xtr->name, bin->sdb, false);
 		if (!bf) {
 			return NULL;
 		}
@@ -745,7 +760,7 @@ R_IPI RList *r_bin_file_get_strings(RBinFile *bf, int min, int dump, int raw) {
 	RBinSection *section;
 	RList *ret = dump? NULL: r_list_newf (r_bin_string_free);
 
-	if (!raw && bf->o && bf->o && bf->o->sections && !r_list_empty (bf->o->sections)) {
+	if (!raw && bf && bf->o && bf->o->sections && !r_list_empty (bf->o->sections)) {
 		RBinObject *o = bf->o;
 		r_list_foreach (o->sections, iter, section) {
 			if (__isDataSection (bf, section)) {
